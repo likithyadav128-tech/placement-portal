@@ -1,0 +1,526 @@
+// ============================================================
+// PLACEMENT TRAINING & STUDENT PERFORMANCE PORTAL
+// PRISMA SCHEMA FOR SUPABASE POSTGRESQL
+// ============================================================
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ─── ENUMS ───────────────────────────────────────────────────
+
+enum Role {
+  STUDENT
+  FACULTY
+  MANAGEMENT
+}
+
+enum UserStatus {
+  PENDING
+  ACTIVE
+  INACTIVE
+  BLOCKED
+}
+
+enum AssessmentType {
+  CODING
+  APTITUDE
+  MIXED
+}
+
+enum ContentStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum AttemptStatus {
+  IN_PROGRESS
+  SUBMITTED
+  EVALUATED
+  ABANDONED
+}
+
+enum Priority {
+  HIGH
+  MEDIUM
+  LOW
+}
+
+enum RoadmapPhase {
+  FOUNDATION
+  CURRENT
+  UPCOMING
+}
+
+enum ProgressStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  COMPLETED
+}
+
+enum NotificationType {
+  INFO
+  WARNING
+  SUCCESS
+  ERROR
+}
+
+// ─── IDENTITY & ACCESS ────────────────────────────────────────
+
+model User {
+  id          String     @id @default(uuid())
+  authUserId  String?    @unique // Maps to Supabase Auth UID (auth.users.id)
+  email       String     @unique
+  name        String
+  role        Role       @default(STUDENT)
+  status      UserStatus @default(ACTIVE)
+  avatarUrl   String?
+  department  String?
+  lastLoginAt DateTime?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  student               Student?
+  faculty               Faculty?
+  permissionOverrides   UserPermissionOverride[]
+  auditLogs             AuditLog[]
+  notifications         Notification[]
+
+  @@index([authUserId])
+  @@index([email])
+  @@index([role])
+  @@index([status])
+}
+
+model Student {
+  id                 String   @id @default(uuid())
+  userId             String   @unique
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  rollNumber         String   @unique
+  department         String
+  year               String
+  graduationYear     String?
+  phone              String?
+  skills             String[] @default([])
+  placementReadiness Float    @default(0)
+  overallScore       Float    @default(0)
+  codingScore        Float    @default(0)
+  aptitudeScore      Float    @default(0)
+  reasoningScore     Float    @default(0)
+  communicationScore Float    @default(0)
+  trend              String   @default("stable") // "improving" | "stable" | "declining"
+  status             String   @default("active")   // "active" | "inactive" | "graduated"
+  lastActivity       DateTime @default(now())
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  assignedFaculty    FacultyStudentAssignment[]
+  performanceHistory PerformanceRecord[]
+  milestones         PerformanceMilestone[]
+  focusAreas         FocusArea[]
+  assessmentAttempts AssessmentAttempt[]
+  mockTestAttempts   MockTestAttempt[]
+  roadmapProgress    StudentRoadmapProgress[]
+  recommendations    Recommendation[]
+  facultyNotes       FacultyNote[]
+
+  @@index([rollNumber])
+  @@index([department])
+  @@index([overallScore])
+  @@index([placementReadiness])
+}
+
+model Faculty {
+  id          String   @id @default(uuid())
+  userId      String   @unique
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  employeeId  String   @unique
+  department  String
+  designation String   @default("Assistant Professor")
+  status      String   @default("active")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  assignedStudents    FacultyStudentAssignment[]
+  createdAssessments  Assessment[]
+  notesWritten        FacultyNote[]
+
+  @@index([employeeId])
+  @@index([department])
+}
+
+model FacultyStudentAssignment {
+  id         String   @id @default(uuid())
+  facultyId  String
+  faculty    Faculty  @relation(fields: [facultyId], references: [id], onDelete: Cascade)
+  studentId  String
+  student    Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  assignedAt DateTime @default(now())
+
+  @@unique([facultyId, studentId])
+  @@index([facultyId])
+  @@index([studentId])
+}
+
+// ─── PERMISSION & RBAC ────────────────────────────────────────
+
+model Permission {
+  id          String   @id // e.g. "VIEW_STUDENT_PERFORMANCE", "MANAGE_ASSESSMENTS"
+  name        String
+  description String
+  category    String   // "STUDENT", "FACULTY", "ASSESSMENT", "SYSTEM"
+  createdAt   DateTime @default(now())
+
+  roleDefaults RolePermission[]
+  userOverrides UserPermissionOverride[]
+}
+
+model RolePermission {
+  id           String     @id @default(uuid())
+  role         Role
+  permissionId String
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([role, permissionId])
+  @@index([role])
+}
+
+model UserPermissionOverride {
+  id           String     @id @default(uuid())
+  userId       String
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  permissionId String
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+  granted      Boolean    // true = grant, false = revoke
+
+  @@unique([userId, permissionId])
+  @@index([userId])
+}
+
+// ─── ASSESSMENTS & QUESTIONS ──────────────────────────────────
+
+model Assessment {
+  id             String         @id @default(uuid())
+  title          String
+  type           AssessmentType
+  difficulty     String         // "easy" | "medium" | "hard"
+  duration       Int            // Duration in minutes
+  totalQuestions Int            @default(0)
+  status         ContentStatus  @default(DRAFT)
+  deadline       DateTime?
+  description    String?
+  createdById    String?
+  createdBy      Faculty?       @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  codingProblems    CodingProblem[]
+  aptitudeQuestions AptitudeQuestion[]
+  attempts          AssessmentAttempt[]
+
+  @@index([status])
+  @@index([type])
+  @@index([createdAt])
+}
+
+model CodingProblem {
+  id           String      @id @default(uuid())
+  assessmentId String?
+  assessment   Assessment? @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+  title        String
+  difficulty   String      // "easy" | "medium" | "hard"
+  description  String
+  examples     Json        // Array of { input, output, explanation }
+  constraints  String[]    @default([])
+  starterCode  Json        // Record<string, string> keyed by language (python, java, cpp)
+  testCases    Json        // Array of { input, expectedOutput, hidden }
+  createdAt    DateTime    @default(now())
+
+  @@index([assessmentId])
+}
+
+model AptitudeQuestion {
+  id             String      @id @default(uuid())
+  assessmentId   String?
+  assessment     Assessment? @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+  questionNumber Int
+  question       String
+  options        String[]    // Array of 4 answer options
+  correctAnswer  Int         // Index 0-3 (NEVER exposed to student before submission)
+  category       String      // "Quantitative", "Logical Reasoning", "Verbal"
+  marks          Int         @default(1)
+  explanation    String?
+  createdAt      DateTime    @default(now())
+
+  answers        AssessmentAnswer[]
+
+  @@index([assessmentId])
+  @@index([category])
+}
+
+model AssessmentAttempt {
+  id           String        @id @default(uuid())
+  assessmentId String
+  assessment   Assessment    @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+  studentId    String
+  student      Student       @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  startedAt    DateTime      @default(now())
+  submittedAt  DateTime?
+  status       AttemptStatus @default(IN_PROGRESS)
+  score        Float?
+  percentage   Float?
+  timeSpent    Int?          // seconds spent
+
+  answers      AssessmentAnswer[]
+
+  @@index([assessmentId])
+  @@index([studentId])
+  @@index([submittedAt])
+  @@index([status])
+}
+
+model AssessmentAnswer {
+  id             String            @id @default(uuid())
+  attemptId      String
+  attempt        AssessmentAttempt @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  questionId     String?
+  question       AptitudeQuestion? @relation(fields: [questionId], references: [id], onDelete: SetNull)
+  selectedOption Int?              // For aptitude
+  codeSubmission String?           // For coding
+  isCorrect      Boolean?
+  scoreAwarded   Float?
+  answeredAt     DateTime          @default(now())
+
+  @@index([attemptId])
+}
+
+// ─── MOCK TESTS ───────────────────────────────────────────────
+
+model MockTest {
+  id             String        @id @default(uuid())
+  name           String
+  company        String        // e.g. "TCS", "Infosys", "Amazon"
+  category       String        // e.g. "IT Services", "Product Companies"
+  sections       String[]      // e.g. ["Coding", "Quantitative", "Reasoning"]
+  duration       Int           // minutes
+  difficulty     String        // "easy" | "medium" | "hard"
+  totalQuestions Int
+  status         ContentStatus @default(PUBLISHED)
+  description    String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  attempts       MockTestAttempt[]
+
+  @@index([status])
+  @@index([company])
+}
+
+model MockTestAttempt {
+  id          String        @id @default(uuid())
+  mockTestId  String
+  mockTest    MockTest      @relation(fields: [mockTestId], references: [id], onDelete: Cascade)
+  studentId   String
+  student     Student       @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  startedAt   DateTime      @default(now())
+  submittedAt DateTime?
+  status      AttemptStatus @default(IN_PROGRESS)
+  score       Float?
+  percentage  Float?
+  timeSpent   Int?
+
+  @@index([mockTestId])
+  @@index([studentId])
+  @@index([submittedAt])
+}
+
+// ─── PERFORMANCE HISTORY (IMMUTABLE LONGITUDINAL RECORDS) ─────
+
+model PerformanceRecord {
+  id          String   @id @default(uuid())
+  studentId   String
+  student     Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  sourceType  String   // "ASSESSMENT", "MOCK_TEST", "PRACTICE", "MANUAL"
+  sourceId    String?  // References Assessment.id or MockTest.id
+  title       String   // e.g. "Data Structures Benchmark"
+  score       Float
+  maxScore    Float    @default(100)
+  percentage  Float
+  skillArea   String   // "coding", "aptitude", "reasoning", "communication", "overall"
+  month       String   // e.g. "Sep 2026"
+  completedAt DateTime @default(now())
+
+  @@index([studentId, completedAt])
+  @@index([studentId, skillArea])
+  @@index([completedAt])
+}
+
+model PerformanceMilestone {
+  id           String    @id @default(uuid())
+  studentId    String
+  student      Student   @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  title        String
+  achieved     Boolean   @default(false)
+  achievedDate DateTime?
+  createdAt    DateTime  @default(now())
+
+  @@index([studentId])
+}
+
+model FocusArea {
+  id           String   @id @default(uuid())
+  studentId    String
+  student      Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  skill        String   // e.g. "Dynamic Programming"
+  status       String   // "strong" | "improving" | "needs_improvement"
+  currentScore Float
+  targetScore  Float
+  suggestion   String
+  updatedAt    DateTime @default(now())
+
+  @@index([studentId])
+}
+
+// ─── ROADMAP & CURRICULUM ─────────────────────────────────────
+
+model Roadmap {
+  id          String        @id @default(uuid())
+  title       String
+  targetGroup String        // e.g. "Batch 2026 - CS & IT"
+  status      ContentStatus @default(PUBLISHED)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  items       RoadmapItem[]
+
+  @@index([status])
+}
+
+model RoadmapItem {
+  id             String         @id @default(uuid())
+  roadmapId      String
+  roadmap        Roadmap        @relation(fields: [roadmapId], references: [id], onDelete: Cascade)
+  title          String
+  description    String
+  phase          RoadmapPhase   @default(FOUNDATION)
+  order          Int            @default(0)
+  estimatedHours Int            @default(10)
+  skills         String[]       @default([])
+  resources      String[]       @default([])
+
+  progressRecords StudentRoadmapProgress[]
+
+  @@index([roadmapId, phase])
+  @@index([order])
+}
+
+model StudentRoadmapProgress {
+  id            String         @id @default(uuid())
+  studentId     String
+  student       Student        @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  roadmapItemId String
+  roadmapItem   RoadmapItem    @relation(fields: [roadmapItemId], references: [id], onDelete: Cascade)
+  status        ProgressStatus @default(NOT_STARTED)
+  startedAt     DateTime?
+  completedAt   DateTime?
+  updatedAt     DateTime       @updatedAt
+
+  @@unique([studentId, roadmapItemId])
+  @@index([studentId])
+  @@index([roadmapItemId])
+}
+
+// ─── RECOMMENDATIONS ──────────────────────────────────────────
+
+model Recommendation {
+  id             String   @id @default(uuid())
+  studentId      String
+  student        Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  title          String
+  description    String
+  reason         String
+  priority       Priority @default(MEDIUM)
+  expectedBenefit String
+  category       String   // "Coding", "Aptitude", "Mock Test", "Review"
+  actionLabel    String
+  actionUrl      String
+  createdAt      DateTime @default(now())
+
+  @@index([studentId, priority])
+}
+
+// ─── FACULTY NOTES ────────────────────────────────────────────
+
+model FacultyNote {
+  id        String   @id @default(uuid())
+  facultyId String
+  faculty   Faculty  @relation(fields: [facultyId], references: [id], onDelete: Cascade)
+  studentId String
+  student   Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  note      String
+  isPrivate Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([facultyId])
+  @@index([studentId])
+}
+
+// ─── AUDIT LOGGING (IMMUTABLE SECURITY TRAIL) ─────────────────
+
+model AuditLog {
+  id          String   @id @default(uuid())
+  actorUserId String?
+  actor       User?    @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+  actorName   String
+  role        Role
+  action      String   // e.g. "USER_ROLE_CHANGED", "ASSESSMENT_CREATED", "SETTINGS_CHANGED"
+  entityType  String   // e.g. "Student", "Assessment", "Permission"
+  entityId    String?
+  status      String   @default("success") // "success" | "failed"
+  details     String?
+  ipAddress   String?
+  userAgent   String?
+  createdAt   DateTime @default(now())
+
+  @@index([actorUserId])
+  @@index([action])
+  @@index([createdAt])
+}
+
+// ─── SYSTEM SETTINGS & NOTIFICATIONS ──────────────────────────
+
+model InstitutionSetting {
+  id          String   @id @default(uuid())
+  section     String   // "institution", "assessment", "notifications", "security"
+  key         String   @unique
+  label       String
+  description String?
+  type        String   // "text" | "number" | "toggle" | "select"
+  value       String   // Serialized value
+  options     String[] @default([])
+  updatedAt   DateTime @updatedAt
+
+  @@index([section])
+}
+
+model Notification {
+  id        String           @id @default(uuid())
+  userId    String
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String
+  message   String
+  type      NotificationType @default(INFO)
+  read      Boolean          @default(false)
+  createdAt DateTime         @default(now())
+
+  @@index([userId, read])
+  @@index([createdAt])
+}
