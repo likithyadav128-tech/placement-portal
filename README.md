@@ -6,8 +6,8 @@ Built with **Next.js 16 (App Router)**, **React 19**, **TypeScript**, **Tailwind
 
 ---
 
-## Portals & Roles
 
+## Portals & Roles
 1. **Student Portal** (`/student/*`):
    - Command Center Dashboard & Placement Readiness score gauge
    - Longitudinal multi-skill performance analytics (1M, 3M, 6M, 12M, All Time)
@@ -17,6 +17,8 @@ Built with **Next.js 16 (App Router)**, **React 19**, **TypeScript**, **Tailwind
    - 3-Phase Placement Roadmap (Foundation, Current, Upcoming)
    - Deterministic, explainable personalized recommendations
    - Comprehensive student profile management
+
+
 
 2. **Faculty Portal** (`/faculty/*`):
    - Cohort performance overview & early warning detection
