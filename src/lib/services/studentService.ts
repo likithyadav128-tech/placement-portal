@@ -111,6 +111,6 @@ export async function getStudentById(id: string): Promise<Student | null> {
       (s) =>
         s.id.toLowerCase() === normalized ||
         s.rollNumber.toLowerCase() === normalized
-    ) || mockStudents[0]
+    ) || null
   );
 }

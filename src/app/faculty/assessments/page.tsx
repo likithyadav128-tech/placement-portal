@@ -1,155 +1,247 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { PageHeader } from "@/components/layout/page-header";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { mockAssessments } from "@/data/mock/assessments";
 import { StatCard } from "@/components/charts";
-import { Clock, Users, Target, FileText, Plus, ChevronDown } from "lucide-react";
-import { Input } from "@/components/ui/input";
+import { Clock, Users, FileText, ChevronDown } from "lucide-react";
+import { EmptyState, ErrorState } from "@/components/feedback/states";
+
+interface FacultyAssessment {
+  id: string;
+  title: string;
+  description: string | null;
+  type: string;
+  difficulty: string;
+  duration: number;
+  totalQuestions: number;
+  status: string;
+  participantsCount: number;
+  averageScore: number | null;
+  createdAt: string;
+}
 
 export default function AssessmentsPage() {
+  const [assessments, setAssessments] = useState<FacultyAssessment[]>([]);
+  const [activeCount, setActiveCount] = useState(0);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
   const [typeFilter, setTypeFilter] = useState("All");
   const [statusFilter, setStatusFilter] = useState("All");
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
-  const activeCount = mockAssessments.filter(a => a.status === "in_progress" || a.status === "upcoming").length;
-  const avgScore = mockAssessments.reduce((acc, curr) => acc + (curr.averageScore || 0), 0) / mockAssessments.filter(a => a.averageScore).length;
+  const loadData = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/faculty/assessments");
+      if (!res.ok) {
+        const err = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(err.error || "Failed to load assessments");
+      }
+      const json = (await res.json()) as { assessments?: FacultyAssessment[]; activeCount?: number };
+      setAssessments(json.assessments || []);
+      setActiveCount(json.activeCount || 0);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Error loading assessments");
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
 
-  const filteredAssessments = mockAssessments.filter(a => {
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  const filteredAssessments = assessments.filter((a) => {
     if (typeFilter !== "All" && a.type !== typeFilter.toLowerCase()) return false;
     if (statusFilter !== "All" && a.status !== statusFilter.toLowerCase()) return false;
     return true;
   });
 
   const getStatusColor = (status: string) => {
-    switch(status) {
-      case 'completed': return 'bg-slate-100 text-slate-700 border-slate-200';
-      case 'in_progress': return 'bg-blue-50 text-blue-700 border-blue-200';
-      case 'upcoming': return 'bg-amber-50 text-amber-700 border-amber-200';
-      case 'expired': return 'bg-rose-50 text-rose-700 border-rose-200';
-      default: return 'bg-slate-100 text-slate-700';
+    switch (status) {
+      case "completed":
+        return "bg-slate-100 text-slate-700 border-slate-200";
+      case "published":
+      case "in_progress":
+        return "bg-blue-50 text-blue-700 border-blue-200";
+      case "draft":
+      case "upcoming":
+        return "bg-amber-50 text-amber-700 border-amber-200";
+      case "archived":
+        return "bg-rose-50 text-rose-700 border-rose-200";
+      default:
+        return "bg-slate-100 text-slate-700";
     }
   };
 
   const getDifficultyColor = (diff: string) => {
-    switch(diff) {
-      case 'easy': return 'text-emerald-600 bg-emerald-50';
-      case 'medium': return 'text-blue-600 bg-blue-50';
-      case 'hard': return 'text-rose-600 bg-rose-50';
-      default: return '';
+    switch (diff) {
+      case "easy":
+        return "text-emerald-600 bg-emerald-50";
+      case "medium":
+        return "text-blue-600 bg-blue-50";
+      case "hard":
+        return "text-rose-600 bg-rose-50";
+      default:
+        return "";
     }
   };
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
+          <p className="text-sm text-slate-500 font-medium">Loading assessments...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <ErrorState
+        title="Unable to load assessments"
+        message={error}
+        onRetry={loadData}
+      />
+    );
+  }
 
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
-        <PageHeader 
+        <PageHeader
           title="Assessment Monitoring"
-          description="Manage and track all technical and aptitude assessments."
+          description="Track and monitor student performance on published benchmarks."
         />
-        <Button className="gap-2">
-          <Plus className="w-4 h-4" /> Create Assessment
-        </Button>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard title="Total Assessments" value={mockAssessments.length.toString()} icon={<FileText className="w-5 h-5"/>} />
-        <StatCard title="Active / Upcoming" value={activeCount.toString()} icon={<Clock className="w-5 h-5"/>} />
-        <StatCard title="Avg Score" value={`${Math.round(avgScore)}%`} icon={<Target className="w-5 h-5"/>} />
-        <StatCard title="Total Participants" value="2,450" icon={<Users className="w-5 h-5"/>} />
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <StatCard
+          title="Total Benchmarks"
+          value={assessments.length.toString()}
+          icon={<FileText className="w-5 h-5" />}
+        />
+        <StatCard
+          title="Published & Active"
+          value={activeCount.toString()}
+          icon={<Clock className="w-5 h-5" />}
+        />
+        <StatCard
+          title="Total Submissions"
+          value={assessments
+            .reduce((sum, a) => sum + a.participantsCount, 0)
+            .toString()}
+          icon={<Users className="w-5 h-5" />}
+        />
       </div>
 
-      <Card>
-        <CardContent className="p-4">
-          <div className="flex gap-4 mb-6">
-            <select className="h-10 px-3 py-2 bg-white border border-slate-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" value={typeFilter} onChange={e => setTypeFilter(e.target.value)}>
-              <option value="All">All Types</option>
-              <option value="Coding">Coding</option>
-              <option value="Aptitude">Aptitude</option>
-              <option value="Mixed">Mixed</option>
-            </select>
-            <select className="h-10 px-3 py-2 bg-white border border-slate-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
-              <option value="All">All Statuses</option>
-              <option value="Completed">Completed</option>
-              <option value="In_progress">In Progress</option>
-              <option value="Upcoming">Upcoming</option>
-              <option value="Expired">Expired</option>
-            </select>
-            <Input placeholder="Search assessments..." className="max-w-xs ml-auto" />
-          </div>
+      <div className="flex gap-4">
+        <select
+          className="h-10 px-3 py-2 bg-white border border-slate-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          value={typeFilter}
+          onChange={(e) => setTypeFilter(e.target.value)}
+        >
+          <option value="All">All Types</option>
+          <option value="coding">Coding</option>
+          <option value="aptitude">Aptitude</option>
+        </select>
+        <select
+          className="h-10 px-3 py-2 bg-white border border-slate-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value)}
+        >
+          <option value="All">All Statuses</option>
+          <option value="published">Published</option>
+          <option value="draft">Draft</option>
+          <option value="archived">Archived</option>
+        </select>
+      </div>
 
-          <div className="rounded-md border overflow-hidden">
-            <table className="w-full text-sm text-left">
-              <thead className="bg-slate-50 text-slate-500 font-medium border-b">
-                <tr>
-                  <th className="px-4 py-3">Title</th>
-                  <th className="px-4 py-3">Type</th>
-                  <th className="px-4 py-3">Difficulty</th>
-                  <th className="px-4 py-3">Duration</th>
-                  <th className="px-4 py-3">Participants</th>
-                  <th className="px-4 py-3">Avg Score</th>
-                  <th className="px-4 py-3">Status</th>
-                  <th className="px-4 py-3 w-10"></th>
-                </tr>
-              </thead>
-              <tbody className="divide-y">
-                {filteredAssessments.map((assessment) => (
-                  <React.Fragment key={assessment.id}>
-                    <tr 
-                      className={`hover:bg-slate-50 cursor-pointer transition-colors ${expandedId === assessment.id ? 'bg-blue-50/50' : ''}`}
-                      onClick={() => setExpandedId(expandedId === assessment.id ? null : assessment.id)}
+      {filteredAssessments.length === 0 ? (
+        <EmptyState
+          icon={<FileText className="w-8 h-8" />}
+          title="No assessments found"
+          description="There are no assessments matching your filter criteria in PostgreSQL."
+          className="py-12"
+        />
+      ) : (
+        <div className="space-y-4">
+          {filteredAssessments.map((a) => (
+            <Card key={a.id} className="overflow-hidden">
+              <CardContent className="p-5">
+                <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                  <div className="space-y-1.5 flex-1">
+                    <div className="flex items-center gap-2">
+                      <h3 className="font-semibold text-slate-900 text-base">{a.title}</h3>
+                      <Badge variant="secondary" className="capitalize">{a.type}</Badge>
+                      <span className={`text-xs px-2 py-0.5 rounded font-medium ${getDifficultyColor(a.difficulty)}`}>
+                        {a.difficulty}
+                      </span>
+                    </div>
+                    <p className="text-sm text-slate-500 line-clamp-1">{a.description || "No description provided."}</p>
+                    <div className="flex items-center gap-4 text-xs text-slate-500 pt-1">
+                      <span className="flex items-center gap-1">
+                        <Clock className="w-3.5 h-3.5 text-slate-400" /> {a.duration} mins
+                      </span>
+                      <span>•</span>
+                      <span>{a.totalQuestions} questions</span>
+                      <span>•</span>
+                      <span>{a.participantsCount} attempts</span>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-6 self-end md:self-center">
+                    <div className="text-right">
+                      <div className="text-xs text-slate-400">Cohort Avg</div>
+                      <div className="text-lg font-bold text-slate-800">
+                        {a.averageScore !== null ? `${a.averageScore}%` : "—"}
+                      </div>
+                    </div>
+                    <Badge variant="secondary" className={getStatusColor(a.status)}>
+                      {a.status.toUpperCase()}
+                    </Badge>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => setExpandedId(expandedId === a.id ? null : a.id)}
                     >
-                      <td className="px-4 py-3 font-medium text-slate-900">{assessment.title}</td>
-                      <td className="px-4 py-3 capitalize">{assessment.type}</td>
-                      <td className="px-4 py-3">
-                        <span className={`px-2 py-1 rounded text-xs font-medium capitalize ${getDifficultyColor(assessment.difficulty)}`}>
-                          {assessment.difficulty}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-slate-600">{assessment.duration}m</td>
-                      <td className="px-4 py-3 text-slate-600">{assessment.participants || 0}</td>
-                      <td className="px-4 py-3 font-medium">
-                        {assessment.averageScore ? `${assessment.averageScore}%` : '-'}
-                      </td>
-                      <td className="px-4 py-3">
-                        <Badge variant="secondary" className={`capitalize ${getStatusColor(assessment.status)}`}>
-                          {assessment.status.replace('-', ' ')}
-                        </Badge>
-                      </td>
-                      <td className="px-4 py-3">
-                        <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${expandedId === assessment.id ? 'rotate-180' : ''}`} />
-                      </td>
-                    </tr>
-                    {expandedId === assessment.id && (
-                      <tr className="bg-slate-50/50 border-b border-slate-100">
-                        <td colSpan={8} className="px-6 py-4">
-                          <div className="grid grid-cols-3 gap-6 text-sm">
-                            <div>
-                              <p className="text-slate-500 mb-1">Description</p>
-                              <p className="text-slate-700">{assessment.description || "No description provided."}</p>
-                            </div>
-                            <div>
-                              <p className="text-slate-500 mb-1">Questions Breakdown</p>
-                              <p className="text-slate-700">Total: {assessment.totalQuestions} questions</p>
-                            </div>
-                            <div className="flex flex-col gap-2 justify-center">
-                              <Button size="sm" variant="outline">View Leaderboard</Button>
-                              <Button size="sm">Manage Assessment</Button>
-                            </div>
-                          </div>
-                        </td>
-                      </tr>
-                    )}
-                  </React.Fragment>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </CardContent>
-      </Card>
+                      <ChevronDown
+                        className={`w-4 h-4 transition-transform ${
+                          expandedId === a.id ? "rotate-180" : ""
+                        }`}
+                      />
+                    </Button>
+                  </div>
+                </div>
+
+                {expandedId === a.id && (
+                  <div className="mt-4 pt-4 border-t border-slate-100 text-sm text-slate-600 grid grid-cols-1 md:grid-cols-3 gap-4 bg-slate-50/50 p-4 rounded-lg">
+                    <div>
+                      <span className="font-medium text-slate-700">Created At:</span>{" "}
+                      {new Date(a.createdAt).toLocaleDateString()}
+                    </div>
+                    <div>
+                      <span className="font-medium text-slate-700">Completed Attempts:</span>{" "}
+                      {a.participantsCount}
+                    </div>
+                    <div>
+                      <span className="font-medium text-slate-700">Scoring Engine:</span>{" "}
+                      Authoritative DB Evaluation
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

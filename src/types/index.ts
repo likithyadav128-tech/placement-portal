@@ -7,7 +7,32 @@ export interface User {
   email: string;
   role: Role;
   avatar?: string;
-  department?: string;
+  avatarUrl?: string | null;
+  department?: string | null;
+  student?: {
+    id: string;
+    rollNumber: string;
+    department: string;
+    year: string;
+    graduationYear?: string | null;
+    phone?: string | null;
+    skills: string[];
+    placementReadiness: number;
+    overallScore: number;
+    codingScore: number;
+    aptitudeScore: number;
+    reasoningScore: number;
+    communicationScore: number;
+    trend: string;
+    status: string;
+  } | null;
+  faculty?: {
+    id: string;
+    employeeId: string;
+    department: string;
+    designation: string;
+    status: string;
+  } | null;
 }
 
 /* ─── Student ─── */

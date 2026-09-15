@@ -1,42 +1,121 @@
 "use client";
 
-import React, { useState } from 'react';
-import { PageHeader } from '@/components/layout/page-header';
-import { Card, CardContent } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { SimpleSelect } from '@/components/ui/select';
-import { Checkbox } from '@/components/ui/checkbox';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
-import { Search, Filter, MoreVertical, Download, UserX } from 'lucide-react';
-import { mockStudents } from '@/data/mock/students';
+import React, { useState, useEffect, useMemo, useCallback } from "react";
+import { PageHeader } from "@/components/layout/page-header";
+import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Search, Download, Users } from "lucide-react";
+import { EmptyState, ErrorState } from "@/components/feedback/states";
+
+interface ManagementStudent {
+  id: string;
+  name: string;
+  email: string;
+  avatarUrl: string | null;
+  rollNumber: string;
+  department: string;
+  year: string;
+  overallScore: number;
+  placementReadiness: number;
+  status: string;
+  lastActivity: string;
+}
 
 export default function StudentsManagementPage() {
-  const [searchTerm, setSearchTerm] = useState('');
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [isDeactivateDialogOpen, setIsDeactivateDialogOpen] = useState(false);
+  const [students, setStudents] = useState<ManagementStudent[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const toggleSelectAll = (checked: boolean) => {
-    if (checked) setSelectedIds(mockStudents.map((s: any) => s.id));
-    else setSelectedIds([]);
-  };
+  const [searchTerm, setSearchTerm] = useState("");
+  const [deptFilter, setDeptFilter] = useState("All");
+  const [yearFilter, setYearFilter] = useState("All");
+  const [tierFilter, setTierFilter] = useState("All");
+  const [statusFilter, setStatusFilter] = useState("All");
 
-  const toggleSelect = (id: string) => {
-    setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
-  };
+  const loadStudents = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/management/students");
+      if (!res.ok) {
+        const err = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(err.error || "Failed to load students directory");
+      }
+      const data = (await res.json()) as { students?: ManagementStudent[] };
+      setStudents(data.students || []);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Error loading students");
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
 
-  const filteredStudents = mockStudents?.filter((s: any) => 
-    s.name?.toLowerCase().includes(searchTerm.toLowerCase()) || 
-    s.rollNumber?.toLowerCase().includes(searchTerm.toLowerCase())
-  ) || [];
+  useEffect(() => {
+    loadStudents();
+  }, [loadStudents]);
+
+  const departments = useMemo(() => {
+    return ["All", ...Array.from(new Set(students.map((s) => s.department)))];
+  }, [students]);
+
+  const years = useMemo(() => {
+    return ["All", ...Array.from(new Set(students.map((s) => s.year)))];
+  }, [students]);
+
+  const filteredStudents = useMemo(() => {
+    let result = students;
+
+    if (searchTerm) {
+      const lower = searchTerm.toLowerCase();
+      result = result.filter(
+        (s) =>
+          s.name.toLowerCase().includes(lower) ||
+          s.rollNumber.toLowerCase().includes(lower)
+      );
+    }
+
+    if (deptFilter !== "All") result = result.filter((s) => s.department === deptFilter);
+    if (yearFilter !== "All") result = result.filter((s) => s.year === yearFilter);
+    if (statusFilter !== "All") result = result.filter((s) => s.status.toLowerCase() === statusFilter.toLowerCase());
+
+    if (tierFilter !== "All") {
+      if (tierFilter === "Above 75%") result = result.filter((s) => s.placementReadiness > 75);
+      else if (tierFilter === "50-75%") result = result.filter((s) => s.placementReadiness >= 50 && s.placementReadiness <= 75);
+      else if (tierFilter === "Below 50%") result = result.filter((s) => s.placementReadiness < 50);
+    }
+
+    return result;
+  }, [students, searchTerm, deptFilter, yearFilter, tierFilter, statusFilter]);
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
+          <p className="text-sm text-slate-500 font-medium">Loading institutional student directory...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <ErrorState
+        title="Unable to load directory"
+        message={error}
+        onRetry={loadStudents}
+      />
+    );
+  }
 
   return (
     <div className="flex flex-col gap-6">
-      <PageHeader 
-        title="Enterprise Student Directory" 
-        description="Manage and monitor all student profiles"
+      <PageHeader
+        title="Enterprise Student Directory"
+        description="Comprehensive view and oversight of all enrolled students in the portal"
       >
         <Button variant="outline" className="gap-2">
           <Download className="w-4 h-4" /> Export All
@@ -48,99 +127,123 @@ export default function StudentsManagementPage() {
           <div className="flex flex-col md:flex-row gap-4 justify-between items-center mb-4">
             <div className="relative w-full md:w-96">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-              <Input 
-                placeholder="Search by name or roll number..." 
+              <Input
+                placeholder="Search by name or roll number..."
                 className="pl-9"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
               />
             </div>
-            <div className="flex items-center gap-2 w-full md:w-auto">
-              <SimpleSelect placeholder="Department" options={[{label: 'CS', value: 'CS'}, {label: 'IT', value: 'IT'}]} />
-              <SimpleSelect placeholder="Year" options={[{label: '3rd Year', value: '3'}, {label: '4th Year', value: '4'}]} />
-              <Button variant="outline" size="icon"><Filter className="w-4 h-4" /></Button>
+            <div className="flex items-center gap-2 w-full md:w-auto flex-wrap">
+              <select
+                className="h-10 px-3 py-2 bg-white border border-slate-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                value={deptFilter}
+                onChange={(e) => setDeptFilter(e.target.value)}
+              >
+                {departments.map((d) => (
+                  <option key={d} value={d}>
+                    {d === "All" ? "All Departments" : d}
+                  </option>
+                ))}
+              </select>
+              <select
+                className="h-10 px-3 py-2 bg-white border border-slate-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                value={yearFilter}
+                onChange={(e) => setYearFilter(e.target.value)}
+              >
+                {years.map((y) => (
+                  <option key={y} value={y}>
+                    {y === "All" ? "All Years" : y}
+                  </option>
+                ))}
+              </select>
+              <select
+                className="h-10 px-3 py-2 bg-white border border-slate-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                value={tierFilter}
+                onChange={(e) => setTierFilter(e.target.value)}
+              >
+                <option value="All">All Tiers</option>
+                <option value="Above 75%">Above 75%</option>
+                <option value="50-75%">50-75%</option>
+                <option value="Below 50%">Below 50%</option>
+              </select>
             </div>
           </div>
 
-          {selectedIds.length > 0 && (
-            <div className="bg-blue-50 text-blue-800 p-3 rounded-lg flex items-center justify-between mb-4 border border-blue-100">
-              <span className="text-sm font-medium">{selectedIds.length} students selected</span>
-              <div className="flex gap-2">
-                <Button size="sm" variant="outline" className="bg-white">Export Selected</Button>
-                <Button size="sm" variant="destructive" onClick={() => setIsDeactivateDialogOpen(true)}>
-                  <UserX className="w-4 h-4 mr-2" /> Deactivate
-                </Button>
-              </div>
-            </div>
-          )}
-
-          <div className="overflow-x-auto">
+          <div className="border rounded-lg overflow-x-auto">
             <table className="w-full text-sm text-left">
-              <thead className="text-xs text-slate-500 uppercase bg-slate-50">
+              <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-medium">
                 <tr>
-                  <th className="p-4"><Checkbox checked={selectedIds.length === mockStudents.length && mockStudents.length > 0} onCheckedChange={toggleSelectAll} /></th>
-                  <th className="p-4">Student</th>
-                  <th className="p-4">Roll Number</th>
-                  <th className="p-4">Department</th>
-                  <th className="p-4">Year</th>
-                  <th className="p-4">Overall Score</th>
-                  <th className="p-4">Readiness</th>
-                  <th className="p-4">Status</th>
-                  <th className="p-4 text-right">Actions</th>
+                  <th className="p-3">Student</th>
+                  <th className="p-3">Roll Number</th>
+                  <th className="p-3">Department</th>
+                  <th className="p-3">Year</th>
+                  <th className="p-3 text-center">Score</th>
+                  <th className="p-3 text-center">Readiness</th>
+                  <th className="p-3 text-center">Status</th>
                 </tr>
               </thead>
-              <tbody>
-                {filteredStudents.map((student: any) => (
-                  <tr key={student.id} className="border-b hover:bg-slate-50">
-                    <td className="p-4">
-                      <Checkbox checked={selectedIds.includes(student.id)} onCheckedChange={() => toggleSelect(student.id)} />
-                    </td>
-                    <td className="p-4 flex items-center gap-3">
-                      <Avatar className="w-8 h-8">
-                        <AvatarFallback>{student.name?.substring(0, 2).toUpperCase()}</AvatarFallback>
-                      </Avatar>
-                      <span className="font-medium">{student.name}</span>
-                    </td>
-                    <td className="p-4">{student.rollNumber}</td>
-                    <td className="p-4">{student.department}</td>
-                    <td className="p-4">{student.year}</td>
-                    <td className="p-4 font-semibold">{student.overallScore}%</td>
-                    <td className="p-4">
-                      <div className="flex items-center gap-2">
-                        <div className="w-16 h-2 bg-slate-100 rounded-full overflow-hidden">
-                          <div className="h-full bg-blue-600" style={{width: `${student.placementReadiness}%`}} />
-                        </div>
-                        <span className="text-xs">{student.placementReadiness}%</span>
+              <tbody className="divide-y divide-slate-100">
+                {filteredStudents.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="p-12 text-center text-slate-500">
+                      <div className="flex flex-col items-center justify-center gap-2">
+                        <Users className="w-8 h-8 text-slate-300" />
+                        <p className="font-medium text-slate-700">No students found</p>
+                        <p className="text-xs text-slate-400">
+                          {students.length === 0
+                            ? "No student records found in PostgreSQL."
+                            : "No students match the current filters."}
+                        </p>
                       </div>
                     </td>
-                    <td className="p-4">
-                      <Badge variant={student.status === 'active' ? 'default' : 'secondary'}>{student.status}</Badge>
-                    </td>
-                    <td className="p-4 text-right">
-                      <Button variant="ghost" size="icon"><MoreVertical className="w-4 h-4" /></Button>
-                    </td>
                   </tr>
-                ))}
+                ) : (
+                  filteredStudents.map((student) => (
+                    <tr key={student.id} className="hover:bg-slate-50">
+                      <td className="p-3">
+                        <div className="flex items-center gap-3">
+                          <Avatar className="h-8 w-8">
+                            <AvatarFallback className="bg-blue-100 text-blue-700 text-xs">
+                              {student.name.substring(0, 2).toUpperCase()}
+                            </AvatarFallback>
+                          </Avatar>
+                          <div>
+                            <p className="font-medium text-slate-900">{student.name}</p>
+                            <p className="text-xs text-slate-500">{student.email}</p>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="p-3 text-slate-600">{student.rollNumber}</td>
+                      <td className="p-3 text-slate-600">{student.department}</td>
+                      <td className="p-3 text-slate-600">{student.year}</td>
+                      <td className="p-3 text-center font-medium text-slate-900">
+                        {student.overallScore}%
+                      </td>
+                      <td className="p-3 text-center">
+                        <Badge
+                          variant={student.placementReadiness >= 75 ? "success" : "secondary"}
+                        >
+                          {student.placementReadiness}%
+                        </Badge>
+                      </td>
+                      <td className="p-3 text-center">
+                        <Badge variant="secondary" className="capitalize">
+                          {student.status}
+                        </Badge>
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>
+
+          <div className="flex items-center justify-between mt-4 text-sm text-slate-500">
+            <span>Showing {filteredStudents.length} of {students.length} students</span>
+          </div>
         </CardContent>
       </Card>
-
-      <Dialog open={isDeactivateDialogOpen} onOpenChange={setIsDeactivateDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Confirm Deactivation</DialogTitle>
-            <DialogDescription>
-              Are you sure you want to deactivate {selectedIds.length} selected students? They will lose access to the portal.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setIsDeactivateDialogOpen(false)}>Cancel</Button>
-            <Button variant="destructive" onClick={() => setIsDeactivateDialogOpen(false)}>Deactivate Students</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

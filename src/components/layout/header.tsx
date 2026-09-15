@@ -10,7 +10,7 @@ import {
   LogOut,
   User,
   Settings,
-  Monitor,
+  Shield,
 } from "lucide-react";
 import { cn, getInitials } from "@/lib/utils";
 import { useRole } from "@/context/RoleContext";
@@ -34,10 +34,9 @@ const roleBadgeColors: Record<Role, string> = {
 };
 
 export function Header({ onMenuClick, pageTitle }: HeaderProps) {
-  const { currentRole, setCurrentRole, user, notifications, unreadCount, markAsRead } = useRole();
+  const { currentRole, user, notifications, unreadCount, markAsRead, signOut } = useRole();
   const [showNotifications, setShowNotifications] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
-  const [showRoleSwitcher, setShowRoleSwitcher] = useState(false);
 
   return (
     <header className="sticky top-0 z-30 h-16 bg-white border-b border-slate-200 flex items-center justify-between px-4 lg:px-6">
@@ -59,64 +58,15 @@ export function Header({ onMenuClick, pageTitle }: HeaderProps) {
 
       {/* Right */}
       <div className="flex items-center gap-2">
-        {/* Role Switcher (Dev only) */}
-        <div className="relative">
-          <button
-            onClick={() => {
-              setShowRoleSwitcher(!showRoleSwitcher);
-              setShowNotifications(false);
-              setShowProfileMenu(false);
-            }}
-            className={cn(
-              "flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-colors",
-              roleBadgeColors[currentRole]
-            )}
-            title="Switch role (dev preview)"
-          >
-            <Monitor className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">{roleLabels[currentRole]}</span>
-            <ChevronDown className="h-3 w-3" />
-          </button>
-          {showRoleSwitcher && (
-            <>
-              <div
-                className="fixed inset-0 z-40"
-                onClick={() => setShowRoleSwitcher(false)}
-              />
-              <div className="absolute right-0 top-full mt-2 w-48 bg-white border border-slate-200 rounded-xl shadow-lg z-50 py-1">
-                <p className="px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-                  Preview as
-                </p>
-                {(["STUDENT", "FACULTY", "MANAGEMENT"] as Role[]).map(
-                  (role) => (
-                    <button
-                      key={role}
-                      onClick={() => {
-                        setCurrentRole(role);
-                        setShowRoleSwitcher(false);
-                      }}
-                      className={cn(
-                        "flex items-center gap-2 w-full px-3 py-2 text-sm transition-colors",
-                        currentRole === role
-                          ? "bg-blue-50 text-blue-700"
-                          : "text-slate-600 hover:bg-slate-50"
-                      )}
-                    >
-                      <span
-                        className={cn(
-                          "w-2 h-2 rounded-full",
-                          currentRole === role
-                            ? "bg-blue-600"
-                            : "bg-slate-300"
-                        )}
-                      />
-                      {roleLabels[role]}
-                    </button>
-                  )
-                )}
-              </div>
-            </>
+        {/* Authoritative Role Indicator */}
+        <div
+          className={cn(
+            "flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border",
+            roleBadgeColors[currentRole]
           )}
+        >
+          <Shield className="h-3.5 w-3.5" />
+          <span className="hidden sm:inline">{roleLabels[currentRole]}</span>
         </div>
 
         {/* Search (desktop) */}
@@ -137,7 +87,6 @@ export function Header({ onMenuClick, pageTitle }: HeaderProps) {
             onClick={() => {
               setShowNotifications(!showNotifications);
               setShowProfileMenu(false);
-              setShowRoleSwitcher(false);
             }}
             className="relative p-2 rounded-lg text-slate-500 hover:bg-slate-50 transition-colors"
             aria-label={`Notifications (${unreadCount} unread)`}
@@ -202,17 +151,16 @@ export function Header({ onMenuClick, pageTitle }: HeaderProps) {
             onClick={() => {
               setShowProfileMenu(!showProfileMenu);
               setShowNotifications(false);
-              setShowRoleSwitcher(false);
             }}
             className="flex items-center gap-2 p-1.5 rounded-lg hover:bg-slate-50 transition-colors"
             aria-label="User menu"
           >
             <div className="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center text-slate-600 text-xs font-semibold">
-              {getInitials(user.name)}
+              {user?.name ? getInitials(user.name) : "U"}
             </div>
             <div className="hidden md:block text-left">
               <p className="text-sm font-medium text-slate-900 leading-tight">
-                {user.name}
+                {user?.name || "Loading..."}
               </p>
               <p className="text-[11px] text-slate-500 leading-tight">
                 {roleLabels[currentRole]}
@@ -229,9 +177,9 @@ export function Header({ onMenuClick, pageTitle }: HeaderProps) {
               <div className="absolute right-0 top-full mt-2 w-56 bg-white border border-slate-200 rounded-xl shadow-lg z-50 py-1">
                 <div className="px-3 py-2 border-b border-slate-100">
                   <p className="text-sm font-medium text-slate-900">
-                    {user.name}
+                    {user?.name || "Authenticated User"}
                   </p>
-                  <p className="text-xs text-slate-500">{user.email}</p>
+                  <p className="text-xs text-slate-500 truncate">{user?.email || ""}</p>
                 </div>
                 <Link
                   href={
@@ -258,13 +206,16 @@ export function Header({ onMenuClick, pageTitle }: HeaderProps) {
                   Settings
                 </Link>
                 <div className="border-t border-slate-100 mt-1 pt-1">
-                  <Link
-                    href="/login"
-                    className="flex items-center gap-2 px-3 py-2 text-sm text-rose-600 hover:bg-rose-50 transition-colors"
+                  <button
+                    onClick={() => {
+                      setShowProfileMenu(false);
+                      signOut();
+                    }}
+                    className="flex items-center gap-2 w-full px-3 py-2 text-sm text-rose-600 hover:bg-rose-50 transition-colors text-left"
                   >
                     <LogOut className="h-4 w-4" />
                     Sign out
-                  </Link>
+                  </button>
                 </div>
               </div>
             </>

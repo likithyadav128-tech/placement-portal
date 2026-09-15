@@ -1,11 +1,11 @@
-"use client";
-
+import { guardPortalRoute } from "@/lib/auth/portal-guard";
 import { AppShell } from "@/components/layout";
 
-export default function StudentLayout({
+export default async function StudentLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  await guardPortalRoute("STUDENT");
   return <AppShell>{children}</AppShell>;
 }

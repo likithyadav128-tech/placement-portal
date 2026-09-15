@@ -1,5 +1,5 @@
 import { createClient } from "../supabase/server";
-import { prisma } from "../prisma";
+import { prisma, withDbRetry } from "../prisma";
 import type { User as DbUser } from "@prisma/client";
 import {
   UnauthorizedError,
@@ -35,19 +35,21 @@ export async function getCurrentUser(): Promise<DbUser | null> {
       return null;
     }
 
-    // Look up application user by Supabase Auth UID or verified email
-    const dbUser = await prisma.user.findFirst({
-      where: {
-        OR: [
-          { authUserId: authUser.id },
-          { email: authUser.email },
-        ],
-      },
-      include: {
-        student: true,
-        faculty: true,
-      },
-    });
+    // Look up application user by Supabase Auth UID or verified email with automatic retry on transient pooler drops
+    const dbUser = await withDbRetry(() =>
+      prisma.user.findFirst({
+        where: {
+          OR: [
+            { authUserId: authUser.id },
+            { email: authUser.email },
+          ],
+        },
+        include: {
+          student: true,
+          faculty: true,
+        },
+      })
+    );
 
     if (!dbUser) {
       throw new UnregisteredUserError();
@@ -63,13 +65,15 @@ export async function getCurrentUser(): Promise<DbUser | null> {
 
     // Link authUserId if matching on email during first Microsoft login
     if (!dbUser.authUserId && authUser.id) {
-      await prisma.user.update({
-        where: { id: dbUser.id },
-        data: {
-          authUserId: authUser.id,
-          lastLoginAt: new Date(),
-        },
-      });
+      await withDbRetry(() =>
+        prisma.user.update({
+          where: { id: dbUser.id },
+          data: {
+            authUserId: authUser.id,
+            lastLoginAt: new Date(),
+          },
+        })
+      );
     }
 
     return dbUser;

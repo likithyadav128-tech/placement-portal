@@ -1,50 +1,174 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { ArrowLeft, User, Mail, Phone, Calendar, BookOpen, GraduationCap, Code, Lightbulb, MessageSquare, Brain } from "lucide-react";
+import {
+  ArrowLeft,
+  User,
+  Mail,
+  BookOpen,
+  GraduationCap,
+  Code,
+  Lightbulb,
+  MessageSquare,
+  Brain,
+} from "lucide-react";
 import { PageHeader } from "@/components/layout/page-header";
-import { mockStudents } from "@/data/mock/students";
-import { mockPerformanceHistory } from "@/data/mock/performance";
-import { Card, CardHeader, CardTitle, CardContent, CardDescription } from "@/components/ui/card";
+import {
+  Card,
+  CardHeader,
+  CardTitle,
+  CardContent,
+} from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { TrendLineChart } from "@/components/charts";
 import { Progress } from "@/components/ui/progress";
 import { Textarea } from "@/components/ui/textarea";
-import { ErrorState } from "@/components/feedback/states";
+import { ErrorState, EmptyState } from "@/components/feedback/states";
+
+interface StudentProfileResponse {
+  student: {
+    id: string;
+    name: string;
+    email: string;
+    avatarUrl: string | null;
+    rollNumber: string;
+    department: string;
+    year: string;
+    skills: string[];
+    placementReadiness: number;
+    overallScore: number;
+    codingScore: number;
+    aptitudeScore: number;
+    reasoningScore: number;
+    communicationScore: number;
+    trend: string;
+    status: string;
+    lastActivity: string;
+  };
+  performanceHistory: Array<{
+    id: string;
+    title: string;
+    skillArea: string;
+    score: number;
+    maxScore: number;
+    percentage: number;
+    month: string;
+    completedAt: string;
+  }>;
+  assessmentHistory: Array<{
+    id: string;
+    title: string;
+    type: string;
+    duration: number;
+    score: number | null;
+    submittedAt: string | null;
+    status: string;
+  }>;
+  notes: Array<{
+    id: string;
+    note: string;
+    createdAt: string;
+  }>;
+}
 
 export default function StudentProfilePage() {
   const params = useParams();
   const router = useRouter();
   const studentId = params.id as string;
-  const student = mockStudents.find(
-    s => s.id === studentId || s.rollNumber.toLowerCase() === studentId?.toLowerCase()
-  );
-  
+
+  const [data, setData] = useState<StudentProfileResponse | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [isForbidden, setIsForbidden] = useState(false);
+
   const [note, setNote] = useState("");
   const [savingNote, setSavingNote] = useState(false);
 
-  if (!student) {
-    return <ErrorState title="Student Not Found" message="The requested student could not be located." onRetry={() => router.push('/faculty/students')} />;
-  }
+  const loadStudent = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+    setIsForbidden(false);
+    try {
+      const res = await fetch(`/api/faculty/students/${studentId}`);
+      if (!res.ok) {
+        const errJson = (await res.json().catch(() => ({}))) as { error?: string };
+        if (res.status === 403) {
+          setIsForbidden(true);
+          throw new Error(errJson.error || "Access denied. You are not assigned to this student.");
+        }
+        if (res.status === 404) {
+          throw new Error("The requested student could not be located in the database.");
+        }
+        throw new Error(errJson.error || "Failed to load student profile");
+      }
+      const json = (await res.json()) as StudentProfileResponse;
+      setData(json);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Error loading student");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [studentId]);
 
-  const performanceData = mockPerformanceHistory[studentId] || mockPerformanceHistory["STU001"]; // Fallback if no specific data
-  const weakAreas = [
-    { name: "Coding", score: student.codingScore },
-    { name: "Aptitude", score: student.aptitudeScore },
-    { name: "Reasoning", score: student.reasoningScore },
-    { name: "Communication", score: student.communicationScore }
-  ].filter(s => s.score < 60);
+  useEffect(() => {
+    loadStudent();
+  }, [loadStudent]);
 
   const handleSaveNote = () => {
     setSavingNote(true);
     setTimeout(() => {
       setSavingNote(false);
       setNote("");
-    }, 1000);
+    }, 800);
   };
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
+          <p className="text-sm text-slate-500 font-medium">Loading student profile...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (isForbidden) {
+    return (
+      <ErrorState
+        title="Unauthorized Student Access"
+        message={error || "You do not have permission to view this student because they are not assigned to your cohort."}
+        onRetry={() => router.push("/faculty/students")}
+      />
+    );
+  }
+
+  if (error || !data) {
+    return (
+      <ErrorState
+        title="Student Not Found"
+        message={error || "The requested student could not be located."}
+        onRetry={() => router.push("/faculty/students")}
+      />
+    );
+  }
+
+  const { student, performanceHistory, assessmentHistory } = data;
+
+  const weakAreas = [
+    { name: "Coding", score: student.codingScore },
+    { name: "Aptitude", score: student.aptitudeScore },
+    { name: "Reasoning", score: student.reasoningScore },
+    { name: "Communication", score: student.communicationScore },
+  ].filter((s) => s.score < 60);
+
+  const chartData = performanceHistory.map((p) => ({
+    month: p.month || new Date(p.completedAt).toLocaleDateString("en-US", { month: "short" }),
+    overall: p.percentage,
+  }));
 
   return (
     <div className="space-y-6">
@@ -67,25 +191,48 @@ export default function StudentProfilePage() {
             <div className="flex-1 space-y-2">
               <div className="flex items-center gap-3">
                 <h2 className="text-2xl font-bold text-slate-900">{student.name}</h2>
-                <Badge variant={student.status === 'active' ? 'default' : 'secondary'} className={student.status === 'active' ? 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200' : ''}>
+                <Badge
+                  variant={student.status === "active" ? "default" : "secondary"}
+                  className={
+                    student.status === "active"
+                      ? "bg-emerald-100 text-emerald-800 hover:bg-emerald-200"
+                      : ""
+                  }
+                >
                   {student.status.toUpperCase()}
                 </Badge>
               </div>
               <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm text-slate-600">
-                <span className="flex items-center gap-1.5"><User className="w-4 h-4 text-slate-400" /> {student.rollNumber}</span>
-                <span className="flex items-center gap-1.5"><BookOpen className="w-4 h-4 text-slate-400" /> {student.department}</span>
-                <span className="flex items-center gap-1.5"><GraduationCap className="w-4 h-4 text-slate-400" /> {student.year}</span>
-                <span className="flex items-center gap-1.5"><Mail className="w-4 h-4 text-slate-400" /> {student.email}</span>
+                <span className="flex items-center gap-1.5">
+                  <User className="w-4 h-4 text-slate-400" /> {student.rollNumber}
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <BookOpen className="w-4 h-4 text-slate-400" /> {student.department}
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <GraduationCap className="w-4 h-4 text-slate-400" /> {student.year}
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <Mail className="w-4 h-4 text-slate-400" /> {student.email}
+                </span>
               </div>
               <div className="flex flex-wrap gap-2 pt-2">
                 {student.skills.map((skill, i) => (
-                  <Badge key={i} variant="secondary" className="bg-slate-50 text-slate-700">{skill}</Badge>
+                  <Badge
+                    key={i}
+                    variant="secondary"
+                    className="bg-slate-50 text-slate-700"
+                  >
+                    {skill}
+                  </Badge>
                 ))}
               </div>
             </div>
             <div className="flex flex-col items-end gap-2 bg-blue-50 p-4 rounded-xl border border-blue-100">
               <span className="text-sm font-medium text-blue-800">Placement Readiness</span>
-              <span className="text-3xl font-bold text-blue-900">{student.placementReadiness}%</span>
+              <span className="text-3xl font-bold text-blue-900">
+                {student.placementReadiness}%
+              </span>
             </div>
           </div>
         </CardContent>
@@ -98,7 +245,7 @@ export default function StudentProfilePage() {
           { label: "Coding", score: student.codingScore, color: "bg-indigo-600", icon: <Code /> },
           { label: "Aptitude", score: student.aptitudeScore, color: "bg-emerald-600", icon: <Lightbulb /> },
           { label: "Reasoning", score: student.reasoningScore, color: "bg-amber-500", icon: <Brain /> },
-          { label: "Communication", score: student.communicationScore, color: "bg-purple-500", icon: <MessageSquare /> }
+          { label: "Communication", score: student.communicationScore, color: "bg-purple-500", icon: <MessageSquare /> },
         ].map((skill, i) => (
           <Card key={i}>
             <CardContent className="p-4 flex flex-col gap-2">
@@ -119,45 +266,68 @@ export default function StudentProfilePage() {
           <Card>
             <CardHeader>
               <CardTitle>Performance History</CardTitle>
-              <CardDescription>Overall progression over time</CardDescription>
             </CardHeader>
             <CardContent>
-              <TrendLineChart 
-                data={performanceData as unknown as Record<string, unknown>[]} 
-                lines={[{ key: "overall", color: "#3b82f6", name: "Overall Score" }]} 
-                height={300}
-              />
+              {chartData.length > 0 ? (
+                <TrendLineChart
+                  data={chartData}
+                  lines={[{ key: "overall", color: "#3b82f6", name: "Score" }]}
+                  height={300}
+                />
+              ) : (
+                <EmptyState
+                  title="No performance records"
+                  description="Completed evaluation milestones will appear here."
+                  className="h-[250px]"
+                />
+              )}
             </CardContent>
           </Card>
 
           {/* Assessment History Table */}
           <Card>
             <CardHeader>
-              <CardTitle>Recent Assessments</CardTitle>
+              <CardTitle>Assessment Submissions</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm text-left">
-                  <thead className="bg-slate-50 text-slate-500 font-medium">
-                    <tr>
-                      <th className="px-4 py-2">Date</th>
-                      <th className="px-4 py-2">Assessment</th>
-                      <th className="px-4 py-2">Type</th>
-                      <th className="px-4 py-2 text-right">Score</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y">
-                    {[1, 2, 3].map((_, i) => (
-                      <tr key={i} className="hover:bg-slate-50">
-                        <td className="px-4 py-3 text-slate-500">Aug 15, 2026</td>
-                        <td className="px-4 py-3 font-medium text-slate-900">Mock Test {i + 1}</td>
-                        <td className="px-4 py-3"><Badge variant="secondary">Mixed</Badge></td>
-                        <td className="px-4 py-3 text-right font-medium">{student.overallScore - i * 2}%</td>
+              {assessmentHistory.length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm text-left">
+                    <thead className="bg-slate-50 text-slate-500 font-medium">
+                      <tr>
+                        <th className="px-4 py-2">Assessment</th>
+                        <th className="px-4 py-2">Type</th>
+                        <th className="px-4 py-2">Duration</th>
+                        <th className="px-4 py-2 text-right">Score</th>
+                        <th className="px-4 py-2 text-right">Status</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                    </thead>
+                    <tbody className="divide-y">
+                      {assessmentHistory.map((a) => (
+                        <tr key={a.id} className="hover:bg-slate-50">
+                          <td className="px-4 py-3 font-medium text-slate-900">{a.title}</td>
+                          <td className="px-4 py-3">
+                            <Badge variant="secondary" className="capitalize">{a.type}</Badge>
+                          </td>
+                          <td className="px-4 py-3 text-slate-500">{a.duration} mins</td>
+                          <td className="px-4 py-3 text-right font-medium">
+                            {a.score !== null ? `${a.score}%` : "Legacy Submission"}
+                          </td>
+                          <td className="px-4 py-3 text-right">
+                            <Badge variant="success">Completed</Badge>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <EmptyState
+                  title="No completed assessments"
+                  description="This student has not submitted any assessments yet."
+                  className="h-[180px]"
+                />
+              )}
             </CardContent>
           </Card>
         </div>
@@ -184,32 +354,9 @@ export default function StudentProfilePage() {
               ) : (
                 <div className="text-center py-6 text-emerald-600 bg-emerald-50 rounded-lg">
                   <p className="font-medium">No critical weak areas.</p>
-                  <p className="text-sm mt-1">Student is performing well across all skills.</p>
+                  <p className="text-sm mt-1">Student is performing at or above benchmark levels.</p>
                 </div>
               )}
-            </CardContent>
-          </Card>
-
-          {/* Roadmap Progress */}
-          <Card>
-            <CardHeader>
-              <CardTitle>Roadmap Progress</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
-                <div className="flex justify-between items-center text-sm">
-                  <span className="text-slate-600">Foundation</span>
-                  <span className="text-emerald-600 font-medium">Completed</span>
-                </div>
-                <div className="flex justify-between items-center text-sm">
-                  <span className="text-slate-600">Advanced Algorithms</span>
-                  <span className="text-blue-600 font-medium">In Progress</span>
-                </div>
-                <div className="flex justify-between items-center text-sm">
-                  <span className="text-slate-600">Mock Interviews</span>
-                  <span className="text-slate-400 font-medium">Upcoming</span>
-                </div>
-              </div>
             </CardContent>
           </Card>
 
@@ -219,13 +366,17 @@ export default function StudentProfilePage() {
               <CardTitle>Faculty Notes</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              <Textarea 
-                placeholder="Add a note about the student's progress..." 
+              <Textarea
+                placeholder="Add a note about the student's progress..."
                 className="resize-none h-24"
                 value={note}
                 onChange={(e) => setNote(e.target.value)}
               />
-              <Button className="w-full" onClick={handleSaveNote} disabled={!note || savingNote}>
+              <Button
+                className="w-full"
+                onClick={handleSaveNote}
+                disabled={!note || savingNote}
+              >
                 {savingNote ? "Saving..." : "Save Note"}
               </Button>
             </CardContent>

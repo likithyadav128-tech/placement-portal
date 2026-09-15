@@ -1,9 +1,4 @@
 import { prisma } from "@/lib/prisma";
-import {
-  mockPerformanceHistory,
-  mockMilestones,
-  mockFocusAreas,
-} from "@/data/mock/performance";
 import type {
   PerformanceRecord,
   PerformanceMilestone,
@@ -30,6 +25,7 @@ export interface PerformanceAnalytics {
 /**
  * Data Access Layer for Performance History.
  * Enforces historical record preservation and dynamic statistical calculations.
+ * Strictly reads real PostgreSQL records without mock fallbacks.
  */
 export async function getStudentPerformance(
   studentId: string,
@@ -55,13 +51,8 @@ export async function getStudentPerformance(
         communication: r.percentage,
       }));
     }
-  } catch {
-    // Fallback
-  }
-
-  // Fallback to mock records if database has no records for this student
-  if (records.length === 0) {
-    records = mockPerformanceHistory[studentId] || mockPerformanceHistory["STU001"] || [];
+  } catch (error) {
+    console.error("Error in getStudentPerformance:", error);
   }
 
   // Filter records based on requested time range
@@ -71,12 +62,31 @@ export async function getStudentPerformance(
   else if (timeRange === "6m") sliced = records.slice(-7);
   else if (timeRange === "12m" || timeRange === "all") sliced = records.slice(-12);
 
+  if (sliced.length === 0) {
+    return {
+      timeRange,
+      records: [],
+      startScore: 0,
+      currentScore: 0,
+      improvement: 0,
+      bestScore: 0,
+      averageScore: 0,
+      assessmentsCompleted: 0,
+      skillDeltas: {
+        coding: { current: 0, previous: 0, change: 0 },
+        aptitude: { current: 0, previous: 0, change: 0 },
+        reasoning: { current: 0, previous: 0, change: 0 },
+        communication: { current: 0, previous: 0, change: 0 },
+      },
+    };
+  }
+
   const startScore = sliced[0]?.overall || 0;
   const currentScore = sliced[sliced.length - 1]?.overall || startScore;
   const improvement = startScore > 0 ? Math.round(((currentScore - startScore) / startScore) * 100) : 0;
   const bestScore = Math.max(...sliced.map((r) => r.overall), currentScore);
   const averageScore = Math.round(
-    sliced.reduce((sum, r) => sum + r.overall, 0) / (sliced.length || 1)
+    sliced.reduce((sum, r) => sum + r.overall, 0) / sliced.length
   );
 
   const prev = sliced.length > 1 ? sliced[sliced.length - 2] : sliced[0];
@@ -84,24 +94,24 @@ export async function getStudentPerformance(
 
   const skillDeltas = {
     coding: {
-      current: curr?.coding || 72,
-      previous: prev?.coding || 68,
-      change: (curr?.coding || 72) - (prev?.coding || 68),
+      current: curr?.coding || 0,
+      previous: prev?.coding || 0,
+      change: (curr?.coding || 0) - (prev?.coding || 0),
     },
     aptitude: {
-      current: curr?.aptitude || 84,
-      previous: prev?.aptitude || 80,
-      change: (curr?.aptitude || 84) - (prev?.aptitude || 80),
+      current: curr?.aptitude || 0,
+      previous: prev?.aptitude || 0,
+      change: (curr?.aptitude || 0) - (prev?.aptitude || 0),
     },
     reasoning: {
-      current: curr?.reasoning || 75,
-      previous: prev?.reasoning || 74,
-      change: (curr?.reasoning || 75) - (prev?.reasoning || 74),
+      current: curr?.reasoning || 0,
+      previous: prev?.reasoning || 0,
+      change: (curr?.reasoning || 0) - (prev?.reasoning || 0),
     },
     communication: {
-      current: curr?.communication || 68,
-      previous: prev?.communication || 62,
-      change: (curr?.communication || 68) - (prev?.communication || 62),
+      current: curr?.communication || 0,
+      previous: prev?.communication || 0,
+      change: (curr?.communication || 0) - (prev?.communication || 0),
     },
   };
 
@@ -113,7 +123,7 @@ export async function getStudentPerformance(
     improvement,
     bestScore,
     averageScore,
-    assessmentsCompleted: sliced.length + 8,
+    assessmentsCompleted: sliced.length,
     skillDeltas,
   };
 }
@@ -159,8 +169,8 @@ export async function recordPerformanceEntry(data: {
         lastActivity: now,
       },
     });
-  } catch {
-    // Database fallback
+  } catch (error) {
+    console.error("Error in recordPerformanceEntry:", error);
   }
 }
 
@@ -168,6 +178,7 @@ export async function getStudentMilestones(studentId: string): Promise<Performan
   try {
     const dbMilestones = await prisma.performanceMilestone.findMany({
       where: { studentId },
+      orderBy: { createdAt: "asc" },
     });
 
     if (dbMilestones.length > 0) {
@@ -178,16 +189,17 @@ export async function getStudentMilestones(studentId: string): Promise<Performan
         achievedDate: m.achievedDate?.toISOString().split("T")[0],
       }));
     }
-  } catch {
-    // Fallback
+  } catch (error) {
+    console.error("Error in getStudentMilestones:", error);
   }
-  return mockMilestones;
+  return [];
 }
 
 export async function getStudentFocusAreas(studentId: string): Promise<FocusArea[]> {
   try {
     const dbAreas = await prisma.focusArea.findMany({
       where: { studentId },
+      orderBy: { updatedAt: "desc" },
     });
 
     if (dbAreas.length > 0) {
@@ -199,8 +211,8 @@ export async function getStudentFocusAreas(studentId: string): Promise<FocusArea
         suggestion: a.suggestion,
       }));
     }
-  } catch {
-    // Fallback
+  } catch (error) {
+    console.error("Error in getStudentFocusAreas:", error);
   }
-  return mockFocusAreas;
+  return [];
 }

@@ -121,6 +121,27 @@ model Student {
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
+  // Extended Profile Fields
+  college            String?
+  university         String?
+  course             String?  // e.g. "B.Tech"
+  branch             String?  // e.g. "Computer Science and Engineering"
+  cgpa               Float?
+  semester           Int?
+  tenthPercentage    Float?
+  twelfthPercentage  Float?
+  activeBacklogs     Int?     @default(0)
+  technicalSkills    String[] @default([])
+  softSkills         String[] @default([])
+  toolsTechnologies  String[] @default([])
+  targetRole         String?
+  targetDomain       String?
+  preferredCompanies String[] @default([])
+  githubUrl          String?
+  linkedinUrl        String?
+  portfolioUrl       String?
+  bio                String?
+
   assignedFaculty    FacultyStudentAssignment[]
   performanceHistory PerformanceRecord[]
   milestones         PerformanceMilestone[]
@@ -130,6 +151,8 @@ model Student {
   roadmapProgress    StudentRoadmapProgress[]
   recommendations    Recommendation[]
   facultyNotes       FacultyNote[]
+  projects           Project[]
+  certifications     Certification[]
 
   @@index([rollNumber])
   @@index([department])
@@ -243,6 +266,8 @@ model CodingProblem {
   testCases    Json        // Array of { input, expectedOutput, hidden }
   createdAt    DateTime    @default(now())
 
+  answers      AssessmentAnswer[]
+
   @@index([assessmentId])
 }
 
@@ -287,18 +312,21 @@ model AssessmentAttempt {
 }
 
 model AssessmentAnswer {
-  id             String            @id @default(uuid())
-  attemptId      String
-  attempt        AssessmentAttempt @relation(fields: [attemptId], references: [id], onDelete: Cascade)
-  questionId     String?
-  question       AptitudeQuestion? @relation(fields: [questionId], references: [id], onDelete: SetNull)
-  selectedOption Int?              // For aptitude
-  codeSubmission String?           // For coding
-  isCorrect      Boolean?
-  scoreAwarded   Float?
-  answeredAt     DateTime          @default(now())
+  id              String            @id @default(uuid())
+  attemptId       String
+  attempt         AssessmentAttempt @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  questionId      String?
+  question        AptitudeQuestion? @relation(fields: [questionId], references: [id], onDelete: SetNull)
+  codingProblemId String?
+  codingProblem   CodingProblem?    @relation(fields: [codingProblemId], references: [id], onDelete: SetNull)
+  selectedOption  Int?              // For aptitude
+  codeSubmission  String?           // For coding
+  isCorrect       Boolean?
+  scoreAwarded    Float?
+  answeredAt      DateTime          @default(now())
 
   @@index([attemptId])
+  @@index([codingProblemId])
 }
 
 // ─── MOCK TESTS ───────────────────────────────────────────────
@@ -314,6 +342,9 @@ model MockTest {
   totalQuestions Int
   status         ContentStatus @default(PUBLISHED)
   description    String?
+  courseTag      String?       // e.g. "B.Tech CSE"
+  departmentTag  String?       // e.g. "Computer Science and Engineering"
+  levels         Json?         // Structured level configuration for 4 levels
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
 
@@ -335,10 +366,46 @@ model MockTestAttempt {
   score       Float?
   percentage  Float?
   timeSpent   Int?
+  levelScores Json?         // { level1: number, level2: number, level3: number, level4: number }
+  answers     Json?         // Record of answers submitted per level
 
   @@index([mockTestId])
   @@index([studentId])
   @@index([submittedAt])
+}
+
+// ─── PROJECTS & CERTIFICATIONS ────────────────────────────────
+
+model Project {
+  id           String   @id @default(uuid())
+  studentId    String
+  student      Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  title        String
+  description  String
+  technologies String[] @default([])
+  githubUrl    String?
+  liveUrl      String?
+  startDate    String?
+  endDate      String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([studentId])
+}
+
+model Certification {
+  id            String   @id @default(uuid())
+  studentId     String
+  student       Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  title         String
+  issuer        String
+  issueDate     String?
+  credentialUrl String?
+  credentialId  String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([studentId])
 }
 
 // ─── PERFORMANCE HISTORY (IMMUTABLE LONGITUDINAL RECORDS) ─────

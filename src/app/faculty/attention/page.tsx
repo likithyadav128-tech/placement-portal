@@ -1,55 +1,129 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { PageHeader } from "@/components/layout/page-header";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { mockStudents } from "@/data/mock/students";
-import { AlertTriangle, Send, Eye, TrendingDown, ArrowUpRight, Clock } from "lucide-react";
+import { AlertTriangle, Send, Eye, TrendingDown, ArrowUpRight, Clock, Users } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { EmptyState, ErrorState } from "@/components/feedback/states";
+
+interface AttentionStudent {
+  id: string;
+  name: string;
+  email: string;
+  rollNumber: string;
+  department: string;
+  overallScore: number;
+  trend: string;
+  reason: string;
+  lastActivity: string;
+  skills: string[];
+}
+
+interface AttentionResponse {
+  critical: AttentionStudent[];
+  needsAttention: AttentionStudent[];
+  monitoring: AttentionStudent[];
+  improving: AttentionStudent[];
+  totalNeedingAttention: number;
+}
 
 export default function AttentionPage() {
+  const [data, setData] = useState<AttentionResponse | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
   const [activeTab, setActiveTab] = useState("critical");
   const [sentList, setSentList] = useState<Record<string, boolean>>({});
 
+  const loadData = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/faculty/attention");
+      if (!res.ok) {
+        const err = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(err.error || "Failed to load students needing attention");
+      }
+      const json = (await res.json()) as AttentionResponse;
+      setData(json);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Error loading data");
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
   const handleSend = (studentId: string) => {
-    setSentList(prev => ({ ...prev, [studentId]: true }));
+    setSentList((prev) => ({ ...prev, [studentId]: true }));
   };
 
-  // Categorize students
-  const critical = mockStudents.filter(s => s.overallScore < 50);
-  const needsAttention = mockStudents.filter(s => s.overallScore >= 50 && s.overallScore < 60);
-  const monitoring = mockStudents.filter(s => s.overallScore >= 60 && s.overallScore < 70 && s.trend === "declining");
-  const improving = mockStudents.filter(s => s.overallScore < 65 && s.trend === "improving");
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
+          <p className="text-sm text-slate-500 font-medium">Loading attention categories...</p>
+        </div>
+      </div>
+    );
+  }
 
-  const getStudentCards = (students: typeof mockStudents, badgeColor: string, defaultAction: string) => {
+  if (error || !data) {
+    return (
+      <ErrorState
+        title="Unable to load attention list"
+        message={error || "An unexpected error occurred while fetching student data."}
+        onRetry={loadData}
+      />
+    );
+  }
+
+  const getStudentCards = (
+    students: AttentionStudent[],
+    badgeColor: string,
+    defaultAction: string
+  ) => {
     if (students.length === 0) {
       return (
-        <div className="text-center py-12 bg-white rounded-xl border border-slate-200">
-          <p className="text-slate-500 font-medium">No students in this category.</p>
-        </div>
+        <EmptyState
+          icon={<Users className="h-6 w-6" />}
+          title="No students in this tier"
+          description="None of your assigned students currently meet the criteria for this category."
+          className="py-12"
+        />
       );
     }
 
     return (
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-        {students.map(student => (
-          <Card key={student.id} className="overflow-hidden hover:shadow-md transition-shadow">
+        {students.map((student) => (
+          <Card
+            key={student.id}
+            className="overflow-hidden hover:shadow-md transition-shadow"
+          >
             <div className={`h-1 w-full ${badgeColor}`} />
             <CardContent className="p-5">
               <div className="flex justify-between items-start mb-4">
                 <div className="flex gap-3">
                   <Avatar className="h-10 w-10">
                     <AvatarFallback className="bg-slate-100 text-slate-700">
-                      {student.name.substring(0,2).toUpperCase()}
+                      {student.name.substring(0, 2).toUpperCase()}
                     </AvatarFallback>
                   </Avatar>
                   <div>
                     <h3 className="font-semibold text-slate-900">{student.name}</h3>
-                    <p className="text-xs text-slate-500">{student.rollNumber} • {student.department}</p>
+                    <p className="text-xs text-slate-500">
+                      {student.rollNumber} • {student.department}
+                    </p>
                   </div>
                 </div>
                 <div className="text-right">
@@ -58,36 +132,43 @@ export default function AttentionPage() {
               </div>
 
               <div className="space-y-3 mb-4">
-                <div className="flex items-center gap-2 text-sm text-slate-600 bg-slate-50 p-2 rounded">
-                  <AlertTriangle className="w-4 h-4 text-amber-500" />
-                  <span>{student.trend === 'declining' ? 'Declining performance trend' : 'Consistently low scores'}</span>
+                <div className="flex items-center gap-2 text-xs">
+                  <Badge variant="secondary" className="font-normal text-slate-600">
+                    {student.reason}
+                  </Badge>
+                  {student.trend === "declining" && (
+                    <span className="flex items-center text-rose-600">
+                      <TrendingDown className="w-3.5 h-3.5 mr-1" /> Declining
+                    </span>
+                  )}
+                  {student.trend === "improving" && (
+                    <span className="flex items-center text-emerald-600">
+                      <ArrowUpRight className="w-3.5 h-3.5 mr-1" /> Improving
+                    </span>
+                  )}
                 </div>
+
                 <div className="flex items-center gap-2 text-xs text-slate-500">
-                  <Clock className="w-4 h-4" />
+                  <Clock className="w-3.5 h-3.5 text-slate-400" />
                   <span>Last active: {new Date(student.lastActivity).toLocaleDateString()}</span>
                 </div>
               </div>
 
               <div className="flex gap-2 pt-2 border-t border-slate-100">
-                <Button variant="outline" size="sm" className="flex-1" asChild>
+                <Button variant="outline" size="sm" asChild className="flex-1">
                   <Link href={`/faculty/students/${student.id}`}>
-                    <Eye className="w-4 h-4 mr-2" /> View Profile
+                    <Eye className="w-3.5 h-3.5 mr-1.5" /> View Profile
                   </Link>
                 </Button>
-                <Button 
-                  size="sm" 
-                  variant={sentList[student.id] ? "secondary" : "default"}
-                  className="flex-1"
+                <Button
+                  variant="secondary"
+                  size="sm"
                   onClick={() => handleSend(student.id)}
                   disabled={sentList[student.id]}
+                  className="flex-1 text-slate-700"
                 >
-                  {sentList[student.id] ? (
-                    <span className="text-emerald-700 font-medium">Sent ✓</span>
-                  ) : (
-                    <>
-                      <Send className="w-4 h-4 mr-2" /> {defaultAction}
-                    </>
-                  )}
+                  <Send className="w-3.5 h-3.5 mr-1.5" />
+                  {sentList[student.id] ? "Sent" : defaultAction}
                 </Button>
               </div>
             </CardContent>
@@ -99,58 +180,39 @@ export default function AttentionPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader 
+      <PageHeader
         title="Students Needing Attention"
-        description="Monitor and intervene for students who are struggling or declining in performance."
+        description="Monitor students requiring academic intervention and follow-up based on benchmark scores."
       />
 
-      <Tabs defaultValue="critical" onValueChange={setActiveTab}>
-        <TabsList className="bg-slate-100 p-1 rounded-lg">
-          <TabsTrigger value="critical" className="rounded-md data-[state=active]:bg-white data-[state=active]:text-rose-600 data-[state=active]:shadow-sm px-4">
-            Critical ({critical.length})
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
+        <TabsList className="grid grid-cols-4 w-full max-w-2xl">
+          <TabsTrigger value="critical" className="gap-2">
+            Critical ({data.critical.length})
           </TabsTrigger>
-          <TabsTrigger value="attention" className="rounded-md data-[state=active]:bg-white data-[state=active]:text-amber-600 data-[state=active]:shadow-sm px-4">
-            Needs Attention ({needsAttention.length})
+          <TabsTrigger value="needs_attention" className="gap-2">
+            Developing ({data.needsAttention.length})
           </TabsTrigger>
-          <TabsTrigger value="monitoring" className="rounded-md data-[state=active]:bg-white data-[state=active]:text-blue-600 data-[state=active]:shadow-sm px-4">
-            Monitoring ({monitoring.length})
+          <TabsTrigger value="monitoring" className="gap-2">
+            Monitoring ({data.monitoring.length})
           </TabsTrigger>
-          <TabsTrigger value="improving" className="rounded-md data-[state=active]:bg-white data-[state=active]:text-emerald-600 data-[state=active]:shadow-sm px-4">
-            Improving ({improving.length})
+          <TabsTrigger value="improving" className="gap-2">
+            Improving ({data.improving.length})
           </TabsTrigger>
         </TabsList>
 
         <div className="mt-6">
-          <TabsContent value="critical" className="m-0 focus-visible:outline-none">
-            <div className="mb-4">
-              <h2 className="text-lg font-semibold text-slate-900">Critical Priority</h2>
-              <p className="text-sm text-slate-500">Students scoring below 50%. Immediate intervention recommended.</p>
-            </div>
-            {getStudentCards(critical, "bg-rose-500", "Schedule Meeting")}
+          <TabsContent value="critical">
+            {getStudentCards(data.critical, "bg-rose-500", "Send Alert")}
           </TabsContent>
-          
-          <TabsContent value="attention" className="m-0 focus-visible:outline-none">
-            <div className="mb-4">
-              <h2 className="text-lg font-semibold text-slate-900">Needs Attention</h2>
-              <p className="text-sm text-slate-500">Students scoring between 50-60%. Targeted practice recommended.</p>
-            </div>
-            {getStudentCards(needsAttention, "bg-amber-500", "Send Reminder")}
+          <TabsContent value="needs_attention">
+            {getStudentCards(data.needsAttention, "bg-amber-500", "Remind")}
           </TabsContent>
-          
-          <TabsContent value="monitoring" className="m-0 focus-visible:outline-none">
-            <div className="mb-4">
-              <h2 className="text-lg font-semibold text-slate-900">Monitoring</h2>
-              <p className="text-sm text-slate-500">Students with declining trends but scores still above 60%.</p>
-            </div>
-            {getStudentCards(monitoring, "bg-blue-500", "Check-in Message")}
+          <TabsContent value="monitoring">
+            {getStudentCards(data.monitoring, "bg-blue-500", "Follow Up")}
           </TabsContent>
-
-          <TabsContent value="improving" className="m-0 focus-visible:outline-none">
-            <div className="mb-4">
-              <h2 className="text-lg font-semibold text-slate-900">Improving</h2>
-              <p className="text-sm text-slate-500">Previously struggling students who are showing upward trends.</p>
-            </div>
-            {getStudentCards(improving, "bg-emerald-500", "Send Encouragement")}
+          <TabsContent value="improving">
+            {getStudentCards(data.improving, "bg-emerald-500", "Encourage")}
           </TabsContent>
         </div>
       </Tabs>

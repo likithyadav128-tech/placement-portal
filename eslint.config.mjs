@@ -12,6 +12,7 @@ const eslintConfig = defineConfig([
       "react/no-unescaped-entities": "off",
       "@typescript-eslint/no-empty-object-type": "off",
       "react-hooks/purity": "warn",
+      "react-hooks/set-state-in-effect": "warn",
     },
   },
   globalIgnores([

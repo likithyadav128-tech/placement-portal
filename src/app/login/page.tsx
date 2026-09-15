@@ -37,14 +37,111 @@ export default function LoginPage() {
     return null;
   });
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isLoading) return;
     setIsLoading(true);
-    // Simulate login delay in dev preview, then redirect
-    setTimeout(() => {
+    setAuthError(null);
+
+    try {
+      const supabase = createClient();
+      const { data: authData, error: signInError } = await supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password,
+      });
+
+      if (signInError) {
+        if (signInError.message.toLowerCase().includes("invalid login credentials")) {
+          setAuthError("Invalid email or password. Please check your credentials and try again.");
+        } else if (signInError.message.toLowerCase().includes("email not confirmed")) {
+          setAuthError("Your email address has not been confirmed. Please check your inbox for the verification link.");
+        } else {
+          setAuthError(signInError.message || "Authentication failed. Please try again.");
+        }
+        setIsLoading(false);
+        return;
+      }
+
+      if (!authData.user) {
+        setAuthError("Authentication failed. No user session returned.");
+        setIsLoading(false);
+        return;
+      }
+
+      // Query server-side application identity and role with Bearer token and automatic transient retry
+      const token = authData.session?.access_token;
+      const authHeaders: Record<string, string> = token
+        ? { Authorization: `Bearer ${token}` }
+        : {};
+
+      let meResponse = await fetch("/api/auth/me", {
+        headers: authHeaders,
+      });
+
+      // If server returns a transient error (e.g. 500 during pooler reconnect), retry once after a short delay
+      if (meResponse.status === 500) {
+        await new Promise((resolve) => setTimeout(resolve, 800));
+        meResponse = await fetch("/api/auth/me", {
+          headers: authHeaders,
+        });
+      }
+
+      const meData = (await meResponse.json().catch(() => ({}))) as {
+        user?: {
+          id: string;
+          name: string;
+          email: string;
+          role: string;
+          department?: string | null;
+        };
+        error?: string;
+      };
+
+      if (!meResponse.ok) {
+        if (meResponse.status === 401) {
+          await supabase.auth.signOut();
+          setAuthError("Session could not be verified. Please try signing in again.");
+        } else if (meResponse.status === 404) {
+          await supabase.auth.signOut();
+          setAuthError(
+            meData.error ||
+              "Your account is authenticated, but no matching user profile was found in the portal database. Please contact your institution administrator."
+          );
+        } else if (meResponse.status === 403) {
+          await supabase.auth.signOut();
+          setAuthError(
+            meData.error ||
+              "Your account has been suspended, blocked, or is inactive. Please contact your institution administrator."
+          );
+        } else {
+          // Do NOT destroy authenticated session on transient server/database errors
+          setAuthError(
+            "Unable to connect to the database to resolve your account profile. Please check your connection and try again."
+          );
+        }
+        setIsLoading(false);
+        return;
+      }
+
+      const role = meData.user?.role;
+
+      // Role-based routing strictly derived from database response
+      if (role === "STUDENT") {
+        router.push("/student/dashboard");
+      } else if (role === "FACULTY") {
+        router.push("/faculty/dashboard");
+      } else if (role === "MANAGEMENT") {
+        router.push("/management/dashboard");
+      } else {
+        await supabase.auth.signOut();
+        setAuthError("Unrecognized account role. Please contact your institution administrator.");
+        setIsLoading(false);
+      }
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "A network error occurred. Please try again.";
+      setAuthError(message);
       setIsLoading(false);
-      router.push("/student/dashboard");
-    }, 1200);
+    }
   };
 
   const handleMicrosoftLogin = async () => {
@@ -62,19 +159,18 @@ export default function LoginPage() {
       });
 
       if (error) {
-        console.warn("Supabase Microsoft OAuth prompt:", error.message);
-        // Fallback for dev environment without active Supabase OAuth setup
-        setTimeout(() => {
-          setIsLoading(false);
-          router.push("/student/dashboard");
-        }, 1200);
+        console.warn("Supabase Microsoft OAuth error:", error.message);
+        setAuthError(error.message || "Microsoft authentication failed. Please try again.");
+        setIsLoading(false);
       }
     } catch (err) {
       console.warn("Supabase client error:", err);
-      setTimeout(() => {
-        setIsLoading(false);
-        router.push("/student/dashboard");
-      }, 1200);
+      setAuthError(
+        err instanceof Error
+          ? err.message
+          : "An unexpected error occurred during Microsoft login."
+      );
+      setIsLoading(false);
     }
   };
 

@@ -23,7 +23,8 @@ import {
   ChevronRight,
   LogOut,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn, getInitials } from "@/lib/utils";
+import { useRole } from "@/context/RoleContext";
 import type { Role } from "@/lib/constants";
 
 interface SidebarNavItem {
@@ -61,10 +62,9 @@ function getNavGroups(role: Role): SidebarNavGroup[] {
           title: "Preparation",
           items: [
             {
-              title: "Assessments",
-              href: "/student/assessments",
+              title: "Assignments",
+              href: "/student/assignments",
               icon: <ClipboardList className="h-5 w-5" />,
-              badge: 3,
             },
             {
               title: "Mock Tests",
@@ -86,10 +86,20 @@ function getNavGroups(role: Role): SidebarNavGroup[] {
               href: "/student/recommendations",
               icon: <Lightbulb className="h-5 w-5" />,
             },
+          ],
+        },
+        {
+          title: "Profile",
+          items: [
             {
               title: "Profile",
               href: "/student/profile",
               icon: <UserCircle className="h-5 w-5" />,
+            },
+            {
+              title: "Resume Creator",
+              href: "/student/resume",
+              icon: <ScrollText className="h-5 w-5" />,
             },
           ],
         },
@@ -321,10 +331,7 @@ export function Sidebar({
         {!collapsed && (
           <div className="flex items-center gap-3 px-3 py-2 mb-2">
             <div className="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center text-slate-600 text-xs font-semibold shrink-0">
-              {userName
-                .split(" ")
-                .map((n) => n[0])
-                .join("")}
+              {getInitials(userName)}
             </div>
             <div className="min-w-0">
               <p className="text-sm font-medium text-slate-900 truncate">
@@ -367,6 +374,7 @@ export function MobileSidebar({
   userEmail,
 }: MobileSidebarProps) {
   const pathname = usePathname();
+  const { signOut } = useRole();
   const navGroups = getNavGroups(role);
 
   if (!open) return null;
@@ -451,10 +459,7 @@ export function MobileSidebar({
         <div className="border-t border-slate-200 p-4">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-full bg-slate-200 flex items-center justify-center text-slate-600 text-xs font-semibold">
-              {userName
-                .split(" ")
-                .map((n) => n[0])
-                .join("")}
+              {getInitials(userName)}
             </div>
             <div className="min-w-0">
               <p className="text-sm font-medium text-slate-900 truncate">
@@ -463,7 +468,13 @@ export function MobileSidebar({
               <p className="text-xs text-slate-500 truncate">{userEmail}</p>
             </div>
           </div>
-          <button className="flex items-center gap-2 mt-3 px-3 py-2 w-full rounded-lg text-sm text-slate-600 hover:bg-slate-50 transition-colors">
+          <button
+            onClick={() => {
+              onClose();
+              signOut();
+            }}
+            className="flex items-center gap-2 mt-3 px-3 py-2 w-full rounded-lg text-sm text-slate-600 hover:bg-slate-50 transition-colors"
+          >
             <LogOut className="h-4 w-4" />
             <span>Sign out</span>
           </button>
