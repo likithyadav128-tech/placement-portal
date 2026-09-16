@@ -1,9 +1,14 @@
 import { PrismaClient } from "@prisma/client";
+import { PrismaPg } from "@prisma/adapter-pg";
+import { Pool } from "pg";
 
 const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined;
 };
 
+/**
+ * Normalizes the database URL with connection limits, timeouts, and PgBouncer parameters.
+ */
 function getDatabaseUrl(): string | undefined {
   const url = process.env.DATABASE_URL;
   if (!url) return undefined;
@@ -18,8 +23,7 @@ function getDatabaseUrl(): string | undefined {
     const separator = fixedUrl.includes("?") ? "&" : "?";
     fixedUrl = `${fixedUrl}${separator}connection_limit=10`;
   }
-  // Supabase PgBouncer TLS connection from client/Wi-Fi can take 5-15s on initial connect.
-  // Prisma's default connect_timeout is 5s, which causes P1001 on cold connections.
+  // Supabase PgBouncer TLS connection can take 5-15s on cold connections
   if (!fixedUrl.includes("connect_timeout=")) {
     const separator = fixedUrl.includes("?") ? "&" : "?";
     fixedUrl = `${fixedUrl}${separator}connect_timeout=30`;
@@ -31,26 +35,64 @@ function getDatabaseUrl(): string | undefined {
   return fixedUrl;
 }
 
-const resolvedDbUrl = getDatabaseUrl();
-
 /**
- * Singleton instance of PrismaClient.
- * In development, assigns to `globalThis` to prevent exhausting connection limits
- * across Next.js Hot Module Reloading (HMR).
+ * Creates an edge-compatible PrismaClient instance using the PostgreSQL Driver Adapter.
+ * Avoids any dependency on native C++ binary query engines (which fail in Cloudflare Workers / workerd).
  */
-export const prisma =
-  globalForPrisma.prisma ??
-  new PrismaClient({
-    datasources: resolvedDbUrl ? { db: { url: resolvedDbUrl } } : undefined,
+function createPrismaClient(): PrismaClient {
+  const dbUrl = getDatabaseUrl();
+  if (!dbUrl) {
+    // Return standard client as fallback if DATABASE_URL is not yet available
+    return new PrismaClient();
+  }
+
+  const pool = new Pool({
+    connectionString: dbUrl,
+    ssl:
+      dbUrl.includes("supabase.co") || dbUrl.includes("sslmode=require")
+        ? { rejectUnauthorized: false }
+        : undefined,
+    max: 10,
+    connectionTimeoutMillis: 30000,
+    idleTimeoutMillis: 30000,
+  });
+
+  const adapter = new PrismaPg(pool);
+
+  return new PrismaClient({
+    adapter,
     log:
       process.env.NODE_ENV === "development"
         ? ["query", "error", "warn"]
         : ["error"],
   });
-
-if (process.env.NODE_ENV !== "production") {
-  globalForPrisma.prisma = prisma;
 }
+
+/**
+ * Lazily resolves or initializes the singleton PrismaClient.
+ * This guarantees that process.env is read at runtime / request time rather than module evaluation time.
+ */
+export function getPrismaClient(): PrismaClient {
+  if (!globalForPrisma.prisma) {
+    globalForPrisma.prisma = createPrismaClient();
+  }
+  return globalForPrisma.prisma;
+}
+
+/**
+ * Transparent proxy to the lazily-initialized PrismaClient singleton.
+ * Callers can use `prisma.user.findUnique(...)` normally without manual initialization.
+ */
+export const prisma = new Proxy({} as PrismaClient, {
+  get(_target, prop, receiver) {
+    const client = getPrismaClient();
+    const val = Reflect.get(client, prop, receiver);
+    if (typeof val === "function") {
+      return val.bind(client);
+    }
+    return val;
+  },
+});
 
 /**
  * Safely executes a Prisma database query with automatic retry on transient pooler connection drops.
@@ -87,6 +129,7 @@ export async function withDbRetry<T>(
         );
         // Flush any stale sockets in the Prisma client pool before next attempt
         await prisma.$disconnect().catch(() => {});
+        globalForPrisma.prisma = undefined;
         await new Promise((resolve) => setTimeout(resolve, delayMs));
         continue;
       }
