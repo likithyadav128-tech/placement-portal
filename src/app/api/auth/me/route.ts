@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { headers } from "next/headers";
 import { createClient as createSupabaseClient, type User as SupabaseUser } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
 import { prisma, withDbRetry } from "@/lib/prisma";
@@ -21,15 +22,37 @@ export async function GET(request?: Request) {
     let authUser: SupabaseUser | null = null;
 
     // 1. Primary auth check: Verify Authorization Bearer JWT (stateless, zero cookie/storage dependency)
-    const authHeader = request?.headers?.get("authorization");
-    if (authHeader && authHeader.startsWith("Bearer ")) {
+    let headerStore: Awaited<ReturnType<typeof headers>> | null = null;
+    try {
+      headerStore = await headers();
+    } catch {
+      // Defensive: In edge runtimes / contexts without AsyncLocalStorage, headers() may throw
+    }
+
+    const authHeader =
+      request?.headers?.get("authorization") ||
+      request?.headers?.get("Authorization") ||
+      headerStore?.get("authorization") ||
+      headerStore?.get("Authorization") ||
+      null;
+
+    const hasAuthHeader = Boolean(authHeader);
+    const startsWithBearer = Boolean(authHeader && authHeader.startsWith("Bearer "));
+    console.log(`[auth/me] Authorization header exists: ${hasAuthHeader}, startsWithBearer: ${startsWithBearer}`);
+
+    if (authHeader && startsWithBearer) {
       const token = authHeader.substring(7).trim();
       if (token) {
         try {
           const supabaseUrl =
-            process.env.NEXT_PUBLIC_SUPABASE_URL || "https://placeholder-project.supabase.co";
+            process.env.NEXT_PUBLIC_SUPABASE_URL && !process.env.NEXT_PUBLIC_SUPABASE_URL.includes("placeholder-project")
+              ? process.env.NEXT_PUBLIC_SUPABASE_URL
+              : "https://zfouzydarrtqfmrqjvsd.supabase.co";
           const supabaseAnonKey =
-            process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "placeholder-anon-key";
+            process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY && !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY.includes("placeholder-anon")
+              ? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+              : "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inpmb3V6eWRhcnJ0cWZtcnFqdnNkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODkwNTQ3MzcsImV4cCI6MjEwNDYzMDczN30.juQ-vhvvKx3AysRrRmEZkz5C4dU7TWwh52l8EfvN0QE";
+
           const directClient = createSupabaseClient(supabaseUrl, supabaseAnonKey, {
             auth: {
               persistSession: false,
@@ -37,8 +60,11 @@ export async function GET(request?: Request) {
             },
           });
           const { data, error } = await directClient.auth.getUser(token);
-          if (!error && data?.user) {
+          if (error) {
+            console.log(`[auth/me] Bearer token verification failed: ${error.message}`);
+          } else if (data?.user) {
             authUser = data.user;
+            console.log(`[auth/me] Bearer token verification succeeded. Supabase user ID: ${data.user.id}`);
           }
         } catch (tokenErr) {
           console.error("GET /api/auth/me bearer token error:", tokenErr);
@@ -49,7 +75,10 @@ export async function GET(request?: Request) {
     // 2. Fallback auth check: Cookie session extraction (only when no Bearer token is present or valid)
     if (!authUser) {
       try {
-        const rawCookie = request?.headers?.get("cookie") ?? undefined;
+        const rawCookie =
+          request?.headers?.get("cookie") ??
+          headerStore?.get("cookie") ??
+          undefined;
         const supabaseClient = await createClient(rawCookie);
         const {
           data: { user },
@@ -58,6 +87,7 @@ export async function GET(request?: Request) {
 
         if (!authError && user) {
           authUser = user;
+          console.log(`[auth/me] Cookie session verification succeeded. Supabase user ID: ${user.id}`);
         }
       } catch (cookieErr) {
         console.error("GET /api/auth/me cookie session error:", cookieErr);
@@ -158,6 +188,8 @@ export async function GET(request?: Request) {
         };
       }
     }
+
+    console.log(`[auth/me] Prisma user lookup succeeded: ${Boolean(dbUser)}`);
 
     // 3. If no matching User record exists, reject without mock data
     if (!dbUser) {

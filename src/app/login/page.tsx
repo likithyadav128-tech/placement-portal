@@ -68,11 +68,19 @@ export default function LoginPage() {
         return;
       }
 
+      // Explicitly obtain session and access token
+      const session = authData.session ?? (await supabase.auth.getSession()).data?.session;
+      const accessToken = session?.access_token;
+      if (!accessToken) {
+        setAuthError("Session could not be verified. Please try signing in again.");
+        setIsLoading(false);
+        return;
+      }
+
       // Query server-side application identity and role with Bearer token and automatic transient retry
-      const token = authData.session?.access_token;
-      const authHeaders: Record<string, string> = token
-        ? { Authorization: `Bearer ${token}` }
-        : {};
+      const authHeaders: Record<string, string> = {
+        Authorization: `Bearer ${accessToken}`,
+      };
 
       let meResponse = await fetch("/api/auth/me", {
         headers: authHeaders,
