@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { createClient as createSupabaseClient, type User as SupabaseUser } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
 import { prisma, withDbRetry } from "@/lib/prisma";
 
@@ -10,46 +11,56 @@ export const dynamic = "force-dynamic";
  * Secure server-side identity resolver endpoint.
  *
  * Requirements:
- * 1. Validates the session cookie via Supabase server-side client (never accepts client-supplied identity).
+ * 1. Validates the Bearer token or session cookie via Supabase auth (never accepts client-supplied identity).
  * 2. Maps auth.users.id -> public.User.authUserId.
  * 3. Returns safe application-user information only (no secrets, tokens, or mock fallback).
  * 4. Responds with 401 if unauthenticated, 404/403 if no application record exists or if account is inactive/blocked.
  */
 export async function GET(request?: Request) {
   try {
-    // 1. Obtain authenticated Supabase user from secure cookie session
-    let authUser = null;
-    let supabaseClient = null;
-    try {
-      supabaseClient = await createClient();
-      const {
-        data: { user },
-        error: authError,
-      } = await supabaseClient.auth.getUser();
+    let authUser: SupabaseUser | null = null;
 
-      if (!authError && user) {
-        authUser = user;
+    // 1. Primary auth check: Verify Authorization Bearer JWT (stateless, zero cookie/storage dependency)
+    const authHeader = request?.headers?.get("authorization");
+    if (authHeader && authHeader.startsWith("Bearer ")) {
+      const token = authHeader.substring(7).trim();
+      if (token) {
+        try {
+          const supabaseUrl =
+            process.env.NEXT_PUBLIC_SUPABASE_URL || "https://placeholder-project.supabase.co";
+          const supabaseAnonKey =
+            process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "placeholder-anon-key";
+          const directClient = createSupabaseClient(supabaseUrl, supabaseAnonKey, {
+            auth: {
+              persistSession: false,
+              autoRefreshToken: false,
+            },
+          });
+          const { data, error } = await directClient.auth.getUser(token);
+          if (!error && data?.user) {
+            authUser = data.user;
+          }
+        } catch (tokenErr) {
+          console.error("GET /api/auth/me bearer token error:", tokenErr);
+        }
       }
-    } catch (e) {
-      console.error("GET /api/auth/me supabase session error:", e);
     }
 
-    // Fallback: If cookie session wasn't found or was partitioned, check Authorization header
-    if (!authUser && request) {
+    // 2. Fallback auth check: Cookie session extraction (only when no Bearer token is present or valid)
+    if (!authUser) {
       try {
-        const authHeader = request.headers.get("authorization");
-        if (authHeader && authHeader.startsWith("Bearer ")) {
-          const token = authHeader.substring(7);
-          if (supabaseClient) {
-            const { data: tokenData, error: tokenError } =
-              await supabaseClient.auth.getUser(token);
-            if (!tokenError && tokenData.user) {
-              authUser = tokenData.user;
-            }
-          }
+        const rawCookie = request?.headers?.get("cookie") ?? undefined;
+        const supabaseClient = await createClient(rawCookie);
+        const {
+          data: { user },
+          error: authError,
+        } = await supabaseClient.auth.getUser();
+
+        if (!authError && user) {
+          authUser = user;
         }
-      } catch (tokenErr) {
-        console.error("GET /api/auth/me bearer token error:", tokenErr);
+      } catch (cookieErr) {
+        console.error("GET /api/auth/me cookie session error:", cookieErr);
       }
     }
 
