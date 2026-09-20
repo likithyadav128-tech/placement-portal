@@ -3,12 +3,39 @@ import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
 import { AsyncLocalStorage } from "node:async_hooks";
 
+export interface HyperdriveBinding {
+  connectionString: string;
+  host?: string;
+  port?: number;
+  user?: string;
+  password?: string;
+  database?: string;
+}
+
 export interface RequestDatabaseContext {
   prisma?: PrismaClient;
   pool?: Pool;
+  hyperdrive?: HyperdriveBinding;
 }
 
 export const requestDatabaseStorage = new AsyncLocalStorage<RequestDatabaseContext>();
+
+/**
+ * Retrieves the Hyperdrive configuration if running within a Cloudflare Worker request
+ * context or if bridged via environment variables.
+ */
+export function getHyperdriveConfig(): HyperdriveBinding | undefined {
+  const store = requestDatabaseStorage.getStore();
+  if (store?.hyperdrive?.connectionString) {
+    return store.hyperdrive;
+  }
+  if (process.env.HYPERDRIVE_CONNECTION_STRING) {
+    return {
+      connectionString: process.env.HYPERDRIVE_CONNECTION_STRING,
+    };
+  }
+  return undefined;
+}
 
 const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined;
@@ -69,7 +96,8 @@ export function createRequestPrismaClient(dbUrlOverride?: string): {
   pool: Pool | null;
   cleanup: () => Promise<void>;
 } {
-  const dbUrl = dbUrlOverride || getDatabaseUrl();
+  const hyperdrive = getHyperdriveConfig();
+  const dbUrl = dbUrlOverride || hyperdrive?.connectionString || getDatabaseUrl();
   if (!dbUrl) {
     const fallbackClient = new PrismaClient();
     return {
@@ -82,10 +110,12 @@ export function createRequestPrismaClient(dbUrlOverride?: string): {
   }
 
   const isLocal = dbUrl.includes("localhost") || dbUrl.includes("127.0.0.1");
+  const isHyperdrive = Boolean(hyperdrive?.connectionString && dbUrl === hyperdrive.connectionString);
 
   const pool = new Pool({
     connectionString: dbUrl,
-    ssl: isLocal ? undefined : { rejectUnauthorized: false },
+    // Hyperdrive connects locally over Cloudflare edge socket and manages TLS to the origin database
+    ssl: isLocal || isHyperdrive ? undefined : { rejectUnauthorized: false },
     max: 1, // Single connection per request in serverless/edge to avoid socket exhaustion
     connectionTimeoutMillis: 15000,
     idleTimeoutMillis: 15000,

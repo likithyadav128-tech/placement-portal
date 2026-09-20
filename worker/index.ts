@@ -1,5 +1,5 @@
 import handler from "vinext/server/fetch-handler";
-import { requestDatabaseStorage, type RequestDatabaseContext } from "../src/lib/prisma";
+import { requestDatabaseStorage, type RequestDatabaseContext, type HyperdriveBinding } from "../src/lib/prisma";
 
 interface ExecutionContext {
   waitUntil(promise: Promise<unknown>): void;
@@ -22,7 +22,15 @@ export default {
       }
     }
 
-    const store: RequestDatabaseContext = {};
+    // Bridge Hyperdrive binding if configured
+    const hyperdrive = env.HYPERDRIVE as HyperdriveBinding | undefined;
+    if (hyperdrive?.connectionString) {
+      process.env.HYPERDRIVE_CONNECTION_STRING = hyperdrive.connectionString;
+    }
+
+    const store: RequestDatabaseContext = {
+      hyperdrive: hyperdrive?.connectionString ? hyperdrive : undefined,
+    };
     return requestDatabaseStorage.run(store, async () => {
       try {
         return await (

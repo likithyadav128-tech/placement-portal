@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { Client, Pool } from "pg";
 import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
+import { getHyperdriveConfig } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
 
@@ -180,6 +181,111 @@ export async function GET() {
   }
 
   const results: TestStepResult[] = [];
+  const hyperdrive = getHyperdriveConfig();
+
+  // =========================================================================
+  // TEST H1: Plain pg.Client using env.HYPERDRIVE.connectionString
+  // =========================================================================
+  if (hyperdrive?.connectionString) {
+    let clientH: Client | null = null;
+    try {
+      clientH = new Client({
+        connectionString: hyperdrive.connectionString,
+        connectionTimeoutMillis: 10000,
+      });
+
+      await clientH.connect();
+      results.push({
+        stage: "test_h1_hyperdrive_raw_client_connect",
+        success: true,
+        host: "hyperdrive",
+        port: 5432,
+        sslConfig: "managed_by_hyperdrive",
+      });
+
+      const resH = await clientH.query("SELECT 1 as test");
+      results.push({
+        stage: "test_h1_hyperdrive_raw_client_select_1",
+        success: true,
+        host: "hyperdrive",
+        port: 5432,
+        sslConfig: "managed_by_hyperdrive",
+        data: resH.rows,
+      });
+    } catch (err: unknown) {
+      const errObj = err as Record<string, unknown> | null;
+      const rawMsg = err instanceof Error ? err.message : String(err);
+      const stage = results.some((r) => r.stage === "test_h1_hyperdrive_raw_client_connect")
+        ? "test_h1_hyperdrive_raw_client_select_1"
+        : "test_h1_hyperdrive_raw_client_connect";
+      results.push({
+        stage,
+        success: false,
+        host: "hyperdrive",
+        port: 5432,
+        sslConfig: "managed_by_hyperdrive",
+        error: {
+          name: typeof errObj?.name === "string" ? errObj.name : "Error",
+          code: typeof errObj?.code === "string" ? errObj.code : undefined,
+          message: sanitize(rawMsg),
+        },
+        classification: classifyError(err, stage, 5432),
+      });
+    } finally {
+      if (clientH) {
+        await clientH.end().catch(() => {});
+      }
+    }
+
+    // =========================================================================
+    // TEST H2: PrismaPg + PrismaClient using env.HYPERDRIVE.connectionString
+    // =========================================================================
+    let poolH: Pool | null = null;
+    let prismaH: PrismaClient | null = null;
+    try {
+      poolH = new Pool({
+        connectionString: hyperdrive.connectionString,
+        max: 1,
+        connectionTimeoutMillis: 10000,
+      });
+
+      const adapterH = new PrismaPg(poolH);
+      prismaH = new PrismaClient({ adapter: adapterH });
+
+      const resH2 = await prismaH.$queryRaw<unknown[]>`SELECT 1 as test`;
+      results.push({
+        stage: "test_h2_hyperdrive_prisma_select_1",
+        success: true,
+        host: "hyperdrive",
+        port: 5432,
+        sslConfig: "managed_by_hyperdrive",
+        data: resH2,
+      });
+    } catch (err: unknown) {
+      const errObj = err as Record<string, unknown> | null;
+      const rawMsg = err instanceof Error ? err.message : String(err);
+      results.push({
+        stage: "test_h2_hyperdrive_prisma_select_1",
+        success: false,
+        host: "hyperdrive",
+        port: 5432,
+        sslConfig: "managed_by_hyperdrive",
+        error: {
+          name: typeof errObj?.name === "string" ? errObj.name : "Error",
+          code: typeof errObj?.code === "string" ? errObj.code : undefined,
+          message: sanitize(rawMsg),
+        },
+        classification: classifyError(err, "prisma_adapter_select_1", 5432),
+      });
+    } finally {
+      if (prismaH) {
+        await prismaH.$disconnect().catch(() => {});
+      }
+      if (poolH) {
+        await poolH.end().catch(() => {});
+      }
+    }
+  }
 
   // =========================================================================
   // TEST A: Plain pg.Client using exact DATABASE_URL (Port 6543)
@@ -409,14 +515,28 @@ export async function GET() {
     }
   }
 
+  const hyperdrivePrismaSuccess = results.some(
+    (r) => r.success && r.stage === "test_h2_hyperdrive_prisma_select_1"
+  );
   const anySuccess = results.some((r) => r.success && r.stage.includes("select_1"));
+  const successfulStep = results.find(
+    (r) => r.success && (r.stage === "test_h2_hyperdrive_prisma_select_1" || r.stage.includes("select_1"))
+  );
 
   return NextResponse.json(
     {
       success: anySuccess,
+      phase: "select_1",
+      engine: "wasm",
+      connection: hyperdrivePrismaSuccess
+        ? "hyperdrive"
+        : hyperdrive
+        ? "hyperdrive_attempted"
+        : "direct_or_pooler",
+      hyperdriveAvailable: Boolean(hyperdrive?.connectionString),
+      result: successfulStep?.data ?? null,
       urlMetadata,
       results,
-      engine: "wasm",
     },
     { status: anySuccess ? 200 : 500 }
   );
