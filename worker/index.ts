@@ -1,4 +1,5 @@
 import handler from "vinext/server/fetch-handler";
+import { requestDatabaseStorage, type RequestDatabaseContext } from "../src/lib/prisma";
 
 interface ExecutionContext {
   waitUntil(promise: Promise<unknown>): void;
@@ -21,14 +22,26 @@ export default {
       }
     }
 
-    return (
-      handler as {
-        fetch: (
-          req: Request,
-          env: Record<string, unknown>,
-          ctx: ExecutionContext
-        ) => Promise<Response>;
+    const store: RequestDatabaseContext = {};
+    return requestDatabaseStorage.run(store, async () => {
+      try {
+        return await (
+          handler as {
+            fetch: (
+              req: Request,
+              env: Record<string, unknown>,
+              ctx: ExecutionContext
+            ) => Promise<Response>;
+          }
+        ).fetch(request, env, ctx);
+      } finally {
+        if (store.prisma) {
+          ctx.waitUntil(store.prisma.$disconnect().catch(() => {}));
+        }
+        if (store.pool) {
+          ctx.waitUntil(store.pool.end().catch(() => {}));
+        }
       }
-    ).fetch(request, env, ctx);
+    });
   },
 };
