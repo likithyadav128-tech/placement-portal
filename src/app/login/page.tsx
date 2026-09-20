@@ -13,9 +13,12 @@ import {
 } from "lucide-react";
 
 import { createClient } from "@/lib/supabase/client";
+import { fetchAuthMe } from "@/lib/auth/client-me";
+import { useRole } from "@/context/RoleContext";
 
 export default function LoginPage() {
   const router = useRouter();
+  const { refreshUser } = useRole();
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [email, setEmail] = useState("");
@@ -77,48 +80,23 @@ export default function LoginPage() {
         return;
       }
 
-      // Query server-side application identity and role with Bearer token and automatic transient retry
-      const authHeaders: Record<string, string> = {
-        Authorization: `Bearer ${accessToken}`,
-      };
+      // Query server-side application identity and role with Bearer token using shared helper
+      const meResult = await fetchAuthMe(accessToken);
 
-      let meResponse = await fetch("/api/auth/me", {
-        headers: authHeaders,
-      });
-
-      // If server returns a transient error (e.g. 500 during pooler reconnect), retry once after a short delay
-      if (meResponse.status === 500) {
-        await new Promise((resolve) => setTimeout(resolve, 800));
-        meResponse = await fetch("/api/auth/me", {
-          headers: authHeaders,
-        });
-      }
-
-      const meData = (await meResponse.json().catch(() => ({}))) as {
-        user?: {
-          id: string;
-          name: string;
-          email: string;
-          role: string;
-          department?: string | null;
-        };
-        error?: string;
-      };
-
-      if (!meResponse.ok) {
-        if (meResponse.status === 401) {
+      if (!meResult.ok || !meResult.user) {
+        if (meResult.status === 401) {
           await supabase.auth.signOut();
           setAuthError("Session could not be verified. Please try signing in again.");
-        } else if (meResponse.status === 404) {
+        } else if (meResult.status === 404) {
           await supabase.auth.signOut();
           setAuthError(
-            meData.error ||
+            meResult.error ||
               "Your account is authenticated, but no matching user profile was found in the portal database. Please contact your institution administrator."
           );
-        } else if (meResponse.status === 403) {
+        } else if (meResult.status === 403) {
           await supabase.auth.signOut();
           setAuthError(
-            meData.error ||
+            meResult.error ||
               "Your account has been suspended, blocked, or is inactive. Please contact your institution administrator."
           );
         } else {
@@ -131,7 +109,10 @@ export default function LoginPage() {
         return;
       }
 
-      const role = meData.user?.role;
+      // Ensure RoleContext has the authenticated user state before navigating
+      await refreshUser(accessToken);
+
+      const role = meResult.user.role;
 
       // Role-based routing strictly derived from database response
       if (role === "STUDENT") {

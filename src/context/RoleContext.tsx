@@ -12,6 +12,7 @@ import { useRouter } from "next/navigation";
 import type { Role } from "@/lib/constants";
 import type { User, Notification } from "@/types";
 import { createClient } from "@/lib/supabase/client";
+import { fetchAuthMe } from "@/lib/auth/client-me";
 
 interface RoleContextValue {
   currentRole: Role;
@@ -22,7 +23,7 @@ interface RoleContextValue {
   notifications: Notification[];
   unreadCount: number;
   markAsRead: (id: string) => void;
-  refreshUser: () => Promise<void>;
+  refreshUser: (token?: string | null) => Promise<void>;
   signOut: () => Promise<void>;
 }
 
@@ -84,99 +85,82 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
 
   const inFlightPromiseRef = useRef<Promise<void> | null>(null);
 
-  const fetchUser = useCallback(async () => {
-    // If a fetch is already in flight, await it to prevent duplicate concurrent requests
-    if (inFlightPromiseRef.current) {
-      return inFlightPromiseRef.current;
-    }
+  const fetchUser = useCallback(
+    async (explicitToken?: string | null) => {
+      // If a fetch is already in flight and no explicit token is provided, await it
+      if (inFlightPromiseRef.current && !explicitToken) {
+        return inFlightPromiseRef.current;
+      }
 
-    const run = async () => {
-      try {
-        let res = await fetch("/api/auth/me");
+      const run = async () => {
+        try {
+          const result = await fetchAuthMe(explicitToken);
 
-        // If server returned a transient error (e.g. 500 during pooler reconnect), retry once after a short delay
-        if (res.status === 500) {
-          await new Promise((resolve) => setTimeout(resolve, 1500));
-          res = await fetch("/api/auth/me");
-        }
-
-        if (!res.ok) {
-          const errorData = (await res.json().catch(() => ({}))) as {
-            error?: string;
-          };
-
-          if (res.status === 401) {
-            // Unauthenticated session
-            setUser(null);
-            setError(null);
-            // Redirect to login if on protected route
-            const currentPath =
-              typeof window !== "undefined" ? window.location.pathname : "";
-            const isProtectedRoute =
-              currentPath &&
-              (currentPath.startsWith("/student") ||
-                currentPath.startsWith("/faculty") ||
-                currentPath.startsWith("/management"));
-            if (isProtectedRoute) {
-              router.push("/login");
-            }
-          } else if (res.status === 404) {
-            setUser(null);
-            setError(
-              errorData.error ||
-                "Your account authenticated successfully, but no matching profile was found in the application database."
-            );
-          } else if (res.status === 403) {
-            setUser(null);
-            setError(
-              errorData.error ||
-                "Your account has been suspended, blocked, or is currently inactive."
-            );
-          } else {
-            // Transient error: do not destroy an already-loaded user session
-            setUser((currentUser) => {
-              if (!currentUser) {
-                setError(errorData.error || "Failed to load user profile.");
+          if (!result.ok || !result.user) {
+            if (result.status === 401) {
+              // Unauthenticated session
+              setUser(null);
+              setError(null);
+              // Redirect to login if on protected route
+              const currentPath =
+                typeof window !== "undefined" ? window.location.pathname : "";
+              const isProtectedRoute =
+                currentPath &&
+                (currentPath.startsWith("/student") ||
+                  currentPath.startsWith("/faculty") ||
+                  currentPath.startsWith("/management"));
+              if (isProtectedRoute) {
+                router.push("/login");
               }
-              return currentUser;
-            });
+            } else if (result.status === 404) {
+              setUser(null);
+              setError(
+                result.error ||
+                  "Your account authenticated successfully, but no matching profile was found in the application database."
+              );
+            } else if (result.status === 403) {
+              setUser(null);
+              setError(
+                result.error ||
+                  "Your account has been suspended, blocked, or is currently inactive."
+              );
+            } else {
+              // Transient error: do not destroy an already-loaded user session
+              setUser((currentUser) => {
+                if (!currentUser) {
+                  setError(result.error || "Failed to load user profile.");
+                }
+                return currentUser;
+              });
+            }
+            return;
           }
-          return;
-        }
 
-        const data = (await res.json()) as { user: User };
-        if (data.user) {
-          setUser(data.user);
-          setCurrentRoleState(data.user.role);
+          setUser(result.user);
+          setCurrentRoleState(result.user.role);
           setError(null);
-        } else {
+        } catch (err: unknown) {
           setUser((currentUser) => {
             if (!currentUser) {
-              setError("Invalid user data received from server.");
+              setError(
+                err instanceof Error
+                  ? err.message
+                  : "Network error occurred while resolving user session."
+              );
             }
             return currentUser;
           });
+        } finally {
+          setIsLoading(false);
+          inFlightPromiseRef.current = null;
         }
-      } catch (err: unknown) {
-        setUser((currentUser) => {
-          if (!currentUser) {
-            setError(
-              err instanceof Error
-                ? err.message
-                : "Network error occurred while resolving user session."
-            );
-          }
-          return currentUser;
-        });
-      } finally {
-        setIsLoading(false);
-        inFlightPromiseRef.current = null;
-      }
-    };
+      };
 
-    inFlightPromiseRef.current = run();
-    return inFlightPromiseRef.current;
-  }, [router]);
+      inFlightPromiseRef.current = run();
+      return inFlightPromiseRef.current;
+    },
+    [router]
+  );
 
   useEffect(() => {
     fetchUser();
@@ -185,12 +169,17 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
     const supabase = createClient();
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((event) => {
+    } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === "SIGNED_OUT") {
         setUser(null);
         setError(null);
+        setIsLoading(false);
       } else if (event === "SIGNED_IN" || event === "TOKEN_REFRESHED") {
-        fetchUser();
+        if (session?.access_token) {
+          fetchUser(session.access_token);
+        } else {
+          fetchUser();
+        }
       }
     });
 
