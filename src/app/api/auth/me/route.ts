@@ -17,9 +17,57 @@ export const dynamic = "force-dynamic";
  * 3. Returns safe application-user information only (no secrets, tokens, or mock fallback).
  * 4. Responds with 401 if unauthenticated, 404/403 if no application record exists or if account is inactive/blocked.
  */
+/**
+ * Safely parses non-sensitive metadata from a JWT without cryptographic verification.
+ * Used strictly for diagnostic logs and pre-flight validation.
+ * NEVER returns raw token or sensitive private claims.
+ */
+function parseSafeJwtMetadata(token: string) {
+  const parts = token.split(".");
+  if (parts.length !== 3) {
+    return {
+      segmentCount: parts.length,
+      tokenLength: token.length,
+      validStructure: false,
+    };
+  }
+
+  try {
+    const base64Url = parts[1];
+    const base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/");
+    const jsonStr =
+      typeof atob === "function"
+        ? atob(base64)
+        : Buffer.from(base64, "base64").toString("utf-8");
+    const payload = JSON.parse(jsonStr) as Record<string, unknown>;
+    const now = Math.floor(Date.now() / 1000);
+
+    return {
+      segmentCount: 3,
+      tokenLength: token.length,
+      validStructure: true,
+      iss: typeof payload.iss === "string" ? payload.iss : undefined,
+      aud: typeof payload.aud === "string" ? payload.aud : undefined,
+      exp: typeof payload.exp === "number" ? payload.exp : undefined,
+      isExpired: typeof payload.exp === "number" ? now > payload.exp : undefined,
+      hasSub: Boolean(payload.sub),
+      role: typeof payload.role === "string" ? payload.role : undefined,
+    };
+  } catch {
+    return {
+      segmentCount: 3,
+      tokenLength: token.length,
+      validStructure: false,
+      parseError: true,
+    };
+  }
+}
+
 export async function GET(request?: Request) {
   try {
     let authUser: SupabaseUser | null = null;
+    let authFailureReason = "Unauthorized";
+    let authFailureDetails: Record<string, unknown> | undefined = undefined;
 
     // 1. Primary auth check: Verify Authorization Bearer JWT (stateless, zero cookie/storage dependency)
     let headerStore: Awaited<ReturnType<typeof headers>> | null = null;
@@ -37,22 +85,53 @@ export async function GET(request?: Request) {
       null;
 
     const hasAuthHeader = Boolean(authHeader);
-    const startsWithBearer = Boolean(authHeader && authHeader.startsWith("Bearer "));
+    const trimmedHeader = authHeader?.trim() || "";
+    const startsWithBearer = Boolean(trimmedHeader.toLowerCase().startsWith("bearer "));
     console.log(`[auth/me] Authorization header exists: ${hasAuthHeader}, startsWithBearer: ${startsWithBearer}`);
 
-    if (authHeader && startsWithBearer) {
-      const token = authHeader.substring(7).trim();
-      if (token) {
-        try {
-          const supabaseUrl =
-            process.env.NEXT_PUBLIC_SUPABASE_URL && !process.env.NEXT_PUBLIC_SUPABASE_URL.includes("placeholder-project")
-              ? process.env.NEXT_PUBLIC_SUPABASE_URL
-              : "https://zfouzydarrtqfmrqjvsd.supabase.co";
-          const supabaseAnonKey =
-            process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY && !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY.includes("placeholder-anon")
-              ? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
-              : "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inpmb3V6eWRhcnJ0cWZtcnFqdnNkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODkwNTQ3MzcsImV4cCI6MjEwNDYzMDczN30.juQ-vhvvKx3AysRrRmEZkz5C4dU7TWwh52l8EfvN0QE";
+    if (hasAuthHeader && startsWithBearer) {
+      const token = trimmedHeader.slice(7).trim();
+      const jwtMeta = parseSafeJwtMetadata(token);
 
+      const supabaseUrl =
+        process.env.NEXT_PUBLIC_SUPABASE_URL && !process.env.NEXT_PUBLIC_SUPABASE_URL.includes("placeholder-project")
+          ? process.env.NEXT_PUBLIC_SUPABASE_URL
+          : "https://zfouzydarrtqfmrqjvsd.supabase.co";
+      const supabaseAnonKey =
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY && !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY.includes("placeholder-anon")
+          ? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+          : "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inpmb3V6eWRhcnJ0cWZtcnFqdnNkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODkwNTQ3MzcsImV4cCI6MjEwNDYzMDczN30.juQ-vhvvKx3AysRrRmEZkz5C4dU7TWwh52l8EfvN0QE";
+
+      let configuredHost = "unknown";
+      try {
+        configuredHost = new URL(supabaseUrl).hostname;
+      } catch {
+        configuredHost = "invalid-url";
+      }
+
+      const issuerMatchesProject = Boolean(
+        jwtMeta.iss &&
+          (jwtMeta.iss === supabaseUrl ||
+            jwtMeta.iss === `${supabaseUrl}/auth/v1` ||
+            jwtMeta.iss.includes(configuredHost))
+      );
+
+      // Diagnostic logging (strictly safe, NO tokens, NO secrets, NO passwords)
+      console.log(
+        `[auth/me:diagnostics] tokenLen=${jwtMeta.tokenLength} segments=${jwtMeta.segmentCount} valid=${jwtMeta.validStructure} iss=${jwtMeta.iss} host=${configuredHost} match=${issuerMatchesProject} expired=${jwtMeta.isExpired} hasSub=${jwtMeta.hasSub} aud=${jwtMeta.aud} role=${jwtMeta.role} hasAnonKey=${Boolean(supabaseAnonKey)} hasServiceKey=${Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY)} hasDbUrl=${Boolean(process.env.DATABASE_URL)} hasDirectUrl=${Boolean(process.env.DIRECT_URL)}`
+      );
+
+      if (!jwtMeta.validStructure) {
+        authFailureReason = "Malformed Bearer token: JWT must contain 3 segments.";
+        authFailureDetails = { segmentCount: jwtMeta.segmentCount };
+      } else if (jwtMeta.isExpired) {
+        authFailureReason = "Bearer token has expired. Please sign in again.";
+        authFailureDetails = { exp: jwtMeta.exp };
+      } else if (jwtMeta.iss && !issuerMatchesProject) {
+        authFailureReason = `JWT issuer mismatch: token issued by '${jwtMeta.iss}' but server configured for '${configuredHost}'.`;
+        authFailureDetails = { tokenIssuer: jwtMeta.iss, configuredHost };
+      } else {
+        try {
           const directClient = createSupabaseClient(supabaseUrl, supabaseAnonKey, {
             auth: {
               persistSession: false,
@@ -61,15 +140,29 @@ export async function GET(request?: Request) {
           });
           const { data, error } = await directClient.auth.getUser(token);
           if (error) {
-            console.log(`[auth/me] Bearer token verification failed: ${error.message}`);
+            console.error(`[auth/me] Supabase getUser failed: name=${error.name} status=${error.status} msg=${error.message}`);
+            authFailureReason = `Supabase authentication error: ${error.message}`;
+            authFailureDetails = {
+              name: error.name,
+              status: error.status,
+              message: error.message,
+            };
           } else if (data?.user) {
             authUser = data.user;
-            console.log(`[auth/me] Bearer token verification succeeded. Supabase user ID: ${data.user.id}`);
+            console.log(`[auth/me] Supabase getUser succeeded. Supabase user ID: ${data.user.id}`);
+          } else {
+            authFailureReason = "Supabase getUser returned no user object.";
           }
-        } catch (tokenErr) {
-          console.error("GET /api/auth/me bearer token error:", tokenErr);
+        } catch (tokenErr: unknown) {
+          const errMsg = tokenErr instanceof Error ? tokenErr.message : String(tokenErr);
+          console.error(`[auth/me] Supabase getUser exception: ${errMsg}`);
+          authFailureReason = `Supabase request exception: ${errMsg}`;
         }
       }
+    } else {
+      authFailureReason = hasAuthHeader
+        ? "Authorization header does not start with 'Bearer '"
+        : "Missing Authorization header";
     }
 
     // 2. Fallback auth check: Cookie session extraction (only when no Bearer token is present or valid)
@@ -79,15 +172,17 @@ export async function GET(request?: Request) {
           request?.headers?.get("cookie") ??
           headerStore?.get("cookie") ??
           undefined;
-        const supabaseClient = await createClient(rawCookie);
-        const {
-          data: { user },
-          error: authError,
-        } = await supabaseClient.auth.getUser();
+        if (rawCookie) {
+          const supabaseClient = await createClient(rawCookie);
+          const {
+            data: { user },
+            error: authError,
+          } = await supabaseClient.auth.getUser();
 
-        if (!authError && user) {
-          authUser = user;
-          console.log(`[auth/me] Cookie session verification succeeded. Supabase user ID: ${user.id}`);
+          if (!authError && user) {
+            authUser = user;
+            console.log(`[auth/me] Cookie session verification succeeded. Supabase user ID: ${user.id}`);
+          }
         }
       } catch (cookieErr) {
         console.error("GET /api/auth/me cookie session error:", cookieErr);
@@ -96,7 +191,10 @@ export async function GET(request?: Request) {
 
     if (!authUser) {
       return NextResponse.json(
-        { error: "Unauthorized" },
+        {
+          error: authFailureReason,
+          details: authFailureDetails,
+        },
         { status: 401 }
       );
     }
