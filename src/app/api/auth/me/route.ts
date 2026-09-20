@@ -2,9 +2,159 @@ import { NextResponse } from "next/server";
 import { headers } from "next/headers";
 import { createClient as createSupabaseClient, type User as SupabaseUser } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
-import { prisma, withDbRetry } from "@/lib/prisma";
+import { prisma, withDbRetry, getSafeDatabaseHost } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
+
+/**
+ * Redacts any connection strings, credentials, passwords, or tokens from error messages.
+ * Guarantees zero sensitive data leakage in logs or client diagnostics.
+ */
+function sanitizeErrorMessage(msg: string): string {
+  let sanitized = msg.replace(
+    /postgres(?:ql)?:\/\/[^@\s]+@([^\s/:]+)(?::\d+)?(?:\/[^\s?#]*)?(?:\?[^\s]*)?/gi,
+    "postgresql://[REDACTED]@$1"
+  );
+  sanitized = sanitized.replace(
+    /([a-zA-Z0-9_-]+):([a-zA-Z0-9!@#$%^&*()_+=-]+)@/g,
+    "[REDACTED_USER]:[REDACTED_PASS]@"
+  );
+  sanitized = sanitized.replace(
+    /eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+/g,
+    "[REDACTED_JWT]"
+  );
+  return sanitized;
+}
+
+export type DbFailureCategory =
+  | "missing_env"
+  | "dns_network_unreachable"
+  | "ssl_tls_failure"
+  | "auth_failure_postgres"
+  | "adapter_runtime_failure"
+  | "pool_exhaustion_timeout"
+  | "schema_error"
+  | "unknown_database_error";
+
+function categorizeDatabaseError(err: unknown): {
+  category: DbFailureCategory;
+  name: string;
+  code?: string;
+  message: string;
+} {
+  if (!process.env.DATABASE_URL) {
+    return {
+      category: "missing_env",
+      name: "MissingEnvironmentVariableError",
+      code: "ENV_MISSING",
+      message: "DATABASE_URL environment variable is not defined in Cloudflare Worker runtime.",
+    };
+  }
+
+  const errObj = err as Record<string, unknown> | null;
+  const name = typeof errObj?.name === "string" ? errObj.name : "Error";
+  const code = typeof errObj?.code === "string" ? errObj.code : undefined;
+  const rawMsg =
+    err instanceof Error
+      ? err.message
+      : typeof errObj?.message === "string"
+      ? errObj.message
+      : String(err);
+  const message = sanitizeErrorMessage(rawMsg);
+
+  const lowerMsg = message.toLowerCase();
+  const lowerName = name.toLowerCase();
+
+  // 1. Missing env
+  if (
+    lowerMsg.includes("environment variable not found") ||
+    (lowerMsg.includes("database_url") && lowerMsg.includes("not found"))
+  ) {
+    return { category: "missing_env", name, code, message };
+  }
+
+  // 2. DNS / Network unreachable
+  if (
+    code === "ENOTFOUND" ||
+    code === "EAI_AGAIN" ||
+    code === "ECONNREFUSED" ||
+    code === "EHOSTUNREACH" ||
+    code === "ENETUNREACH" ||
+    lowerMsg.includes("enotfound") ||
+    lowerMsg.includes("getaddrinfo") ||
+    lowerMsg.includes("econnrefused") ||
+    lowerMsg.includes("can't reach database server")
+  ) {
+    return { category: "dns_network_unreachable", name, code, message };
+  }
+
+  // 3. SSL / TLS handshake failure
+  if (
+    code === "ERR_TLS_CERT_ALTNAME_INVALID" ||
+    code === "DEPTH_ZERO_SELF_SIGNED_CERT" ||
+    lowerMsg.includes("tls") ||
+    lowerMsg.includes("ssl") ||
+    lowerMsg.includes("handshake") ||
+    lowerMsg.includes("cert") ||
+    lowerMsg.includes("no pg_hba.conf entry") ||
+    lowerMsg.includes("no encryption")
+  ) {
+    return { category: "ssl_tls_failure", name, code, message };
+  }
+
+  // 4. Auth failure to Postgres
+  if (
+    code === "28P01" ||
+    code === "28000" ||
+    lowerMsg.includes("password authentication failed") ||
+    (lowerMsg.includes("role") && lowerMsg.includes("does not exist")) ||
+    lowerMsg.includes("authentication failed")
+  ) {
+    return { category: "auth_failure_postgres", name, code, message };
+  }
+
+  // 5. Pool exhaustion / timeout
+  if (
+    code === "ETIMEDOUT" ||
+    code === "P1001" ||
+    code === "P1002" ||
+    lowerMsg.includes("timed out") ||
+    lowerMsg.includes("timeout") ||
+    lowerMsg.includes("pool timeout") ||
+    lowerMsg.includes("connection terminated") ||
+    lowerMsg.includes("connection closed")
+  ) {
+    return { category: "pool_exhaustion_timeout", name, code, message };
+  }
+
+  // 6. Schema error (missing table / column / relation)
+  if (
+    code === "42P01" ||
+    code === "42703" ||
+    code === "P2021" ||
+    code === "P2022" ||
+    lowerMsg.includes("does not exist in the current database") ||
+    (lowerMsg.includes("relation") && lowerMsg.includes("does not exist")) ||
+    (lowerMsg.includes("column") && lowerMsg.includes("does not exist"))
+  ) {
+    return { category: "schema_error", name, code, message };
+  }
+
+  // 7. Adapter / runtime failure (Node vs Workers workerd engine, missing adapter, wasm issue)
+  if (
+    lowerName.includes("prismaclientinitializationerror") ||
+    lowerMsg.includes("query engine") ||
+    lowerMsg.includes("workerd") ||
+    lowerMsg.includes("driver adapter") ||
+    lowerMsg.includes("adapter") ||
+    lowerMsg.includes("not implemented") ||
+    lowerMsg.includes("unsupported")
+  ) {
+    return { category: "adapter_runtime_failure", name, code, message };
+  }
+
+  return { category: "unknown_database_error", name, code, message };
+}
 
 /**
  * GET /api/auth/me
@@ -118,7 +268,7 @@ export async function GET(request?: Request) {
 
       // Diagnostic logging (strictly safe, NO tokens, NO secrets, NO passwords)
       console.log(
-        `[auth/me:diagnostics] tokenLen=${jwtMeta.tokenLength} segments=${jwtMeta.segmentCount} valid=${jwtMeta.validStructure} iss=${jwtMeta.iss} host=${configuredHost} match=${issuerMatchesProject} expired=${jwtMeta.isExpired} hasSub=${jwtMeta.hasSub} aud=${jwtMeta.aud} role=${jwtMeta.role} hasAnonKey=${Boolean(supabaseAnonKey)} hasServiceKey=${Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY)} hasDbUrl=${Boolean(process.env.DATABASE_URL)} hasDirectUrl=${Boolean(process.env.DIRECT_URL)}`
+        `[auth/me:diagnostics] tokenLen=${jwtMeta.tokenLength} segments=${jwtMeta.segmentCount} valid=${jwtMeta.validStructure} iss=${jwtMeta.iss} host=${configuredHost} match=${issuerMatchesProject} expired=${jwtMeta.isExpired} hasSub=${jwtMeta.hasSub} aud=${jwtMeta.aud} role=${jwtMeta.role} hasAnonKey=${Boolean(supabaseAnonKey)} hasServiceKey=${Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY)} hasDbUrl=${Boolean(process.env.DATABASE_URL)} dbHost=${getSafeDatabaseHost()} hasDirectUrl=${Boolean(process.env.DIRECT_URL)}`
       );
 
       if (!jwtMeta.validStructure) {
@@ -237,59 +387,158 @@ export async function GET(request?: Request) {
       },
     };
 
-    // 2. Resolve application User record in PostgreSQL using authUserId as primary mapping
-    let dbUser = await withDbRetry(() =>
-      prisma.user.findUnique({
-        where: {
-          authUserId: authUser.id,
-        },
-        select: userSelection,
-      })
+    // 2. Preflight database verification
+    const hasDbUrl = Boolean(process.env.DATABASE_URL);
+    const dbHost = getSafeDatabaseHost();
+    console.log(
+      `[auth/me:db] Initiating DB lookup for Supabase user: ${authUser.id}. hasDbUrl=${hasDbUrl}, dbHost=${dbHost}`
     );
+
+    if (!hasDbUrl) {
+      console.error("[auth/me:db] DATABASE_URL is not set in Cloudflare Worker runtime environment.");
+      return NextResponse.json(
+        {
+          error: "Database configuration error",
+          diagnostics: {
+            step: "preflight_env_check",
+            category: "missing_env",
+            hasDbUrl: false,
+            dbHost: "NOT_SET",
+            hasDirectUrl: Boolean(process.env.DIRECT_URL),
+            name: "MissingEnvironmentVariableError",
+            code: "ENV_MISSING",
+            message: "DATABASE_URL environment variable is not defined in Cloudflare Worker runtime.",
+          },
+        },
+        { status: 500 }
+      );
+    }
+
+    // 3. Minimal connectivity check (SELECT 1)
+    try {
+      await withDbRetry(() => prisma.$queryRaw`SELECT 1 as test`, 1);
+      console.log(`[auth/me:db] Minimal connectivity check (SELECT 1) succeeded. dbHost=${dbHost}`);
+    } catch (connErr: unknown) {
+      const diag = categorizeDatabaseError(connErr);
+      console.error(
+        `[auth/me:db] Minimal connectivity check (SELECT 1) failed: category=${diag.category} name=${diag.name} code=${diag.code} msg=${diag.message}`
+      );
+      return NextResponse.json(
+        {
+          error: "Database connectivity test failed",
+          diagnostics: {
+            step: "connectivity_check",
+            category: diag.category,
+            hasDbUrl: true,
+            dbHost,
+            hasDirectUrl: Boolean(process.env.DIRECT_URL),
+            name: diag.name,
+            code: diag.code,
+            message: diag.message,
+          },
+        },
+        { status: 500 }
+      );
+    }
+
+    // 4. Resolve application User record in PostgreSQL using authUserId as primary mapping
+    let dbUser = null;
+    try {
+      dbUser = await withDbRetry(() =>
+        prisma.user.findUnique({
+          where: {
+            authUserId: authUser.id,
+          },
+          select: userSelection,
+        })
+      );
+    } catch (queryErr: unknown) {
+      const diag = categorizeDatabaseError(queryErr);
+      console.error(
+        `[auth/me:db] User findUnique by authUserId failed: category=${diag.category} name=${diag.name} code=${diag.code} msg=${diag.message}`
+      );
+      return NextResponse.json(
+        {
+          error: "Database user query failed",
+          diagnostics: {
+            step: "user_lookup_by_auth_id",
+            category: diag.category,
+            hasDbUrl: true,
+            dbHost,
+            name: diag.name,
+            code: diag.code,
+            message: diag.message,
+          },
+        },
+        { status: 500 }
+      );
+    }
 
     // Fallback lookup: if authUserId not yet set, check verified email
     if (!dbUser && authUser.email) {
-      const userByEmail = await withDbRetry(() =>
-        prisma.user.findUnique({
-          where: {
-            email: authUser.email,
-          },
-          select: {
-            ...userSelection,
-            authUserId: true,
-          },
-        })
-      );
-
-      if (userByEmail && !userByEmail.authUserId) {
-        // Link the authUserId to the existing application record
-        await withDbRetry(() =>
-          prisma.user.update({
-            where: { id: userByEmail.id },
-            data: {
-              authUserId: authUser.id,
-              lastLoginAt: new Date(),
+      try {
+        const userByEmail = await withDbRetry(() =>
+          prisma.user.findUnique({
+            where: {
+              email: authUser.email,
+            },
+            select: {
+              ...userSelection,
+              authUserId: true,
             },
           })
         );
 
-        dbUser = {
-          id: userByEmail.id,
-          name: userByEmail.name,
-          email: userByEmail.email,
-          role: userByEmail.role,
-          department: userByEmail.department,
-          avatarUrl: userByEmail.avatarUrl,
-          status: userByEmail.status,
-          student: userByEmail.student,
-          faculty: userByEmail.faculty,
-        };
+        if (userByEmail && !userByEmail.authUserId) {
+          // Link the authUserId to the existing application record
+          await withDbRetry(() =>
+            prisma.user.update({
+              where: { id: userByEmail.id },
+              data: {
+                authUserId: authUser.id,
+                lastLoginAt: new Date(),
+              },
+            })
+          );
+
+          dbUser = {
+            id: userByEmail.id,
+            name: userByEmail.name,
+            email: userByEmail.email,
+            role: userByEmail.role,
+            department: userByEmail.department,
+            avatarUrl: userByEmail.avatarUrl,
+            status: userByEmail.status,
+            student: userByEmail.student,
+            faculty: userByEmail.faculty,
+          };
+        }
+      } catch (fallbackErr: unknown) {
+        const diag = categorizeDatabaseError(fallbackErr);
+        console.error(
+          `[auth/me:db] User fallback lookup by email failed: category=${diag.category} name=${diag.name} code=${diag.code} msg=${diag.message}`
+        );
+        return NextResponse.json(
+          {
+            error: "Database fallback query failed",
+            diagnostics: {
+              step: "user_lookup_by_email",
+              category: diag.category,
+              hasDbUrl: true,
+              dbHost,
+              name: diag.name,
+              code: diag.code,
+              message: diag.message,
+            },
+          },
+          { status: 500 }
+        );
       }
     }
 
     console.log(`[auth/me] Prisma user lookup succeeded: ${Boolean(dbUser)}`);
 
-    // 3. If no matching User record exists, reject without mock data
+    // 5. If no matching User record exists, reject without mock data
     if (!dbUser) {
       return NextResponse.json(
         {
@@ -299,7 +548,7 @@ export async function GET(request?: Request) {
       );
     }
 
-    // 4. Validate user status
+    // 6. Validate user status
     if (dbUser.status === "BLOCKED") {
       return NextResponse.json(
         { error: "Your account has been suspended or blocked." },
@@ -314,7 +563,7 @@ export async function GET(request?: Request) {
       );
     }
 
-    // 5. Return sanitized application user profile (strictly real data)
+    // 7. Return sanitized application user profile (strictly real data)
     return NextResponse.json(
       {
         user: {
@@ -330,10 +579,24 @@ export async function GET(request?: Request) {
       },
       { status: 200 }
     );
-  } catch (err) {
-    console.error("GET /api/auth/me error:", err);
+  } catch (err: unknown) {
+    const diag = categorizeDatabaseError(err);
+    console.error(
+      `[auth/me:error] Uncaught exception in GET /api/auth/me: category=${diag.category} name=${diag.name} code=${diag.code} msg=${diag.message}`
+    );
     return NextResponse.json(
-      { error: "Internal server error" },
+      {
+        error: "Internal server error",
+        diagnostics: {
+          step: "uncaught_route_exception",
+          category: diag.category,
+          hasDbUrl: Boolean(process.env.DATABASE_URL),
+          dbHost: getSafeDatabaseHost(),
+          name: diag.name,
+          code: diag.code,
+          message: diag.message,
+        },
+      },
       { status: 500 }
     );
   }

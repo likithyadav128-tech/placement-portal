@@ -4,7 +4,23 @@ import { Pool } from "pg";
 
 const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined;
+  hasAdapter: boolean | undefined;
 };
+
+/**
+ * Safely extracts the database hostname for diagnostics without leaking credentials,
+ * passwords, or query string parameters.
+ */
+export function getSafeDatabaseHost(): string {
+  const url = process.env.DATABASE_URL;
+  if (!url) return "NOT_SET";
+  try {
+    const parsed = new URL(url);
+    return parsed.hostname || "unknown";
+  } catch {
+    return "invalid-url";
+  }
+}
 
 /**
  * Normalizes the database URL with connection limits, timeouts, and PgBouncer parameters.
@@ -46,13 +62,12 @@ function createPrismaClient(): PrismaClient {
     return new PrismaClient();
   }
 
+  const isLocal = dbUrl.includes("localhost") || dbUrl.includes("127.0.0.1");
+
   const pool = new Pool({
     connectionString: dbUrl,
-    ssl:
-      dbUrl.includes("supabase.co") || dbUrl.includes("sslmode=require")
-        ? { rejectUnauthorized: false }
-        : undefined,
-    max: 10,
+    ssl: isLocal ? undefined : { rejectUnauthorized: false },
+    max: 5,
     connectionTimeoutMillis: 30000,
     idleTimeoutMillis: 30000,
   });
@@ -73,8 +88,13 @@ function createPrismaClient(): PrismaClient {
  * This guarantees that process.env is read at runtime / request time rather than module evaluation time.
  */
 export function getPrismaClient(): PrismaClient {
-  if (!globalForPrisma.prisma) {
+  const dbUrl = getDatabaseUrl();
+  // If no instance exists, OR if the client was previously created without an adapter
+  // (e.g. during module initialization before worker fetch handler populated process.env.DATABASE_URL),
+  // re-instantiate with the PrismaPg driver adapter as soon as DATABASE_URL is available.
+  if (!globalForPrisma.prisma || (!globalForPrisma.hasAdapter && dbUrl)) {
     globalForPrisma.prisma = createPrismaClient();
+    globalForPrisma.hasAdapter = Boolean(dbUrl);
   }
   return globalForPrisma.prisma;
 }
@@ -130,6 +150,7 @@ export async function withDbRetry<T>(
         // Flush any stale sockets in the Prisma client pool before next attempt
         await prisma.$disconnect().catch(() => {});
         globalForPrisma.prisma = undefined;
+        globalForPrisma.hasAdapter = undefined;
         await new Promise((resolve) => setTimeout(resolve, delayMs));
         continue;
       }
