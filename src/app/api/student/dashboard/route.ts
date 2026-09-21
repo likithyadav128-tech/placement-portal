@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import { createClient as createDirectClient, type User as SupabaseUser } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
 import { prisma, withDbRetry } from "@/lib/prisma";
-import { syncRecommendationsForStudent } from "@/lib/recommendations/recommendationEngine";
 
 export const dynamic = "force-dynamic";
 
@@ -213,22 +212,63 @@ export async function GET(req: Request) {
       );
     }
 
-    // 8. Fetch real published upcoming assessments
-    const upcomingAssessments = await withDbRetry(() =>
+    // 8. Fetch real published assessments with student's actual completion status
+    const publishedAssessments = await withDbRetry(() =>
       prisma.assessment.findMany({
         where: { status: "PUBLISHED" },
         orderBy: { createdAt: "desc" },
-        take: 3,
-        select: {
-          id: true,
-          title: true,
-          type: true,
-          duration: true,
-          totalQuestions: true,
-          difficulty: true,
+        include: {
+          attempts: {
+            where: { studentId: student.id },
+            orderBy: { startedAt: "desc" },
+          },
         },
       })
     );
+
+    const nowTimestamp = Date.now();
+    const processedAssessments = publishedAssessments.map((a) => {
+      const completedAttempts = a.attempts.filter(
+        (att) => att.status === "SUBMITTED" || att.status === "EVALUATED"
+      );
+      const isCompleted = completedAttempts.length > 0;
+      const bestScore = isCompleted
+        ? Math.max(...completedAttempts.map((att) => Math.round(att.percentage || 0)))
+        : undefined;
+
+      const inProgressAttempt = a.attempts.find((att) => {
+        if (att.status !== "IN_PROGRESS") return false;
+        const elapsedSeconds = Math.floor((nowTimestamp - att.startedAt.getTime()) / 1000);
+        return elapsedSeconds < a.duration * 60;
+      });
+
+      return {
+        id: a.id,
+        title: a.title,
+        type: a.type.toLowerCase(),
+        duration: a.duration,
+        totalQuestions: a.totalQuestions,
+        difficulty: a.difficulty,
+        isCompleted,
+        bestScore,
+        isInProgress: Boolean(inProgressAttempt),
+      };
+    });
+
+    // Genuinely pending assessments (not yet completed by the student)
+    const pendingAssessments = processedAssessments.filter((a) => !a.isCompleted);
+    // Completed assessments
+    const completedAssessments = processedAssessments.filter((a) => a.isCompleted);
+
+    // Upcoming work displayed on dashboard (pending only)
+    const upcomingAssessments = pendingAssessments.slice(0, 3).map((a) => ({
+      id: a.id,
+      title: a.title,
+      type: a.type,
+      duration: a.duration,
+      totalQuestions: a.totalQuestions,
+      difficulty: a.difficulty,
+    }));
 
     // 9. Fetch published mock tests
     const mockTestsCount = await withDbRetry(() =>
@@ -281,15 +321,47 @@ export async function GET(req: Request) {
       });
     }
 
-    if (upcomingAssessments.length > 0) {
-      reminders.push({
-        id: "rem-assess",
-        title: "Placement Assignment Available",
-        description: `Benchmark assignment "${upcomingAssessments[0].title}" is ready for completion.`,
-        actionLabel: "Start Assignment",
-        actionUrl: "/student/assignments",
-        priority: "MEDIUM",
-      });
+    // Dynamic Placement Assignment Reminder:
+    // Only show "ready for completion" if an assignment is genuinely pending.
+    // If all published assignments are completed, offer improvement if scores < 70%, or hide.
+    if (pendingAssessments.length > 0) {
+      const pendingAssignment = pendingAssessments[0];
+      if (pendingAssignment.isInProgress) {
+        reminders.push({
+          id: "rem-assess",
+          title: "Resume Placement Assignment",
+          description: `Assignment "${pendingAssignment.title}" is in progress. Continue to complete your submission.`,
+          actionLabel: "Continue Assignment",
+          actionUrl: "/student/assignments",
+          priority: "MEDIUM",
+        });
+      } else {
+        reminders.push({
+          id: "rem-assess",
+          title: "Placement Assignment Available",
+          description: `Benchmark assignment "${pendingAssignment.title}" is ready for completion.`,
+          actionLabel: "Start Assignment",
+          actionUrl: "/student/assignments",
+          priority: "MEDIUM",
+        });
+      }
+    } else if (completedAssessments.length > 0) {
+      // Check if any completed assignment has an improvable score (< 70%)
+      const improvable = [...completedAssessments].sort(
+        (a, b) => (a.bestScore ?? 0) - (b.bestScore ?? 0)
+      )[0];
+
+      if (improvable && (improvable.bestScore ?? 0) < 70) {
+        reminders.push({
+          id: "rem-assess",
+          title: "Improve Assignment Benchmark",
+          description: `Retake "${improvable.title}" (current best: ${improvable.bestScore}%) to strengthen your placement readiness score.`,
+          actionLabel: "Retake Assignment",
+          actionUrl: "/student/assignments",
+          priority: "LOW",
+        });
+      }
+      // If all completed assignments scored >= 70%, this action item is hidden cleanly.
     }
 
     if (roadmapProgressPercentage < 50) {
