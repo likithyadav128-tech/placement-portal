@@ -60,7 +60,8 @@ interface SubmitResult {
 function CodingAssessmentContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const assessmentIdFromQuery = searchParams.get("assessmentId");
+  const assessmentIdFromQuery =
+    searchParams.get("assessmentId") || searchParams.get("id");
 
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -138,6 +139,12 @@ function CodingAssessmentContent() {
       }
       const startData = (await startRes.json()) as { attempt: AttemptDetails };
       const currentAttempt = startData.attempt;
+      if (currentAttempt.type?.toLowerCase() === "aptitude") {
+        router.replace(
+          `/student/assessments/aptitude?assessmentId=${currentAttempt.assessmentId}`
+        );
+        return;
+      }
       setAttempt(currentAttempt);
 
       // Load problems & saved code

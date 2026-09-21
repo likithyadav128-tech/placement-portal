@@ -33,7 +33,7 @@ import { DashboardSkeleton, ErrorState, EmptyState } from "@/components/feedback
 interface AssessmentItem {
   id: string;
   title: string;
-  type: "CODING" | "APTITUDE" | "MIXED";
+  type: string;
   difficulty: string;
   duration: number;
   totalQuestions: number;
@@ -44,6 +44,16 @@ interface AssessmentItem {
   lastAttemptScore?: number;
   attemptsCount: number;
   activeAttemptId?: string;
+}
+
+function isCodingAssessment(type?: string): boolean {
+  const t = type?.toUpperCase();
+  return t === "CODING" || t === "MIXED";
+}
+
+function isAptitudeAssessment(type?: string): boolean {
+  const t = type?.toUpperCase();
+  return t === "APTITUDE";
 }
 
 export default function StudentAssignmentsPage() {
@@ -81,10 +91,10 @@ export default function StudentAssignmentsPage() {
   }, [loadAssignments]);
 
   const handleStart = (assessment: AssessmentItem) => {
-    if (assessment.type === "CODING") {
-      router.push(`/student/assessments/coding?id=${assessment.id}`);
+    if (isCodingAssessment(assessment.type)) {
+      router.push(`/student/assessments/coding?assessmentId=${assessment.id}`);
     } else {
-      router.push(`/student/assessments/aptitude?id=${assessment.id}`);
+      router.push(`/student/assessments/aptitude?assessmentId=${assessment.id}`);
     }
   };
 
@@ -100,8 +110,8 @@ export default function StudentAssignmentsPage() {
       if (!matchesSearch) return false;
 
       // Category filter
-      if (categoryFilter === "cat1" && item.type !== "APTITUDE") return false;
-      if (categoryFilter === "cat2" && item.type !== "CODING" && item.type !== "MIXED") return false;
+      if (categoryFilter === "cat1" && !isAptitudeAssessment(item.type)) return false;
+      if (categoryFilter === "cat2" && !isCodingAssessment(item.type)) return false;
 
       // Status filter
       if (statusFilter === "not_started" && item.status !== "upcoming") return false;
@@ -140,8 +150,8 @@ export default function StudentAssignmentsPage() {
     );
   }
 
-  const cat1Count = assessments.filter((a) => a.type === "APTITUDE").length;
-  const cat2Count = assessments.filter((a) => a.type === "CODING" || a.type === "MIXED").length;
+  const cat1Count = assessments.filter((a) => isAptitudeAssessment(a.type)).length;
+  const cat2Count = assessments.filter((a) => isCodingAssessment(a.type)).length;
 
   return (
     <div className="space-y-6 pb-16">
@@ -262,7 +272,7 @@ export default function StudentAssignmentsPage() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {filteredAssignments.map((item) => {
-            const isCat1 = item.type === "APTITUDE";
+            const isCat1 = isAptitudeAssessment(item.type);
             const isCompleted = item.status === "completed";
             const isInProgress = item.status === "in_progress";
 

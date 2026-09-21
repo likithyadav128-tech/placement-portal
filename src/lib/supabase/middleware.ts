@@ -7,7 +7,7 @@ import { type NextRequest, NextResponse } from "next/server";
  * Used in Next.js middleware/proxy to keep the session alive and validate auth state.
  */
 export async function updateSession(request: NextRequest) {
-  let response = NextResponse.next();
+  const response = NextResponse.next();
 
   const supabaseUrl =
     process.env.NEXT_PUBLIC_SUPABASE_URL && !process.env.NEXT_PUBLIC_SUPABASE_URL.includes("placeholder-project")

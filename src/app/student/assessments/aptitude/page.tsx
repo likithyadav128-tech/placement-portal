@@ -45,7 +45,8 @@ interface SubmissionResult {
 function AptitudeAssessmentContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const assessmentIdFromQuery = searchParams.get("assessmentId");
+  const assessmentIdFromQuery =
+    searchParams.get("assessmentId") || searchParams.get("id");
 
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -98,6 +99,12 @@ function AptitudeAssessmentContent() {
       }
       const startData = (await startRes.json()) as { attempt: AttemptDetails };
       const currentAttempt = startData.attempt;
+      if (currentAttempt.type?.toLowerCase() === "coding") {
+        router.replace(
+          `/student/assessments/coding?assessmentId=${currentAttempt.assessmentId}`
+        );
+        return;
+      }
       setAttempt(currentAttempt);
 
       // 3. Load questions & existing saved answers

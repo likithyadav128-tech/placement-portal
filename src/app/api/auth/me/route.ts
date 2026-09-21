@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { headers } from "next/headers";
-import { createClient as createSupabaseClient } from "@supabase/supabase-js";
+import { createClient as createSupabaseClient, type User as SupabaseUser } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
 import { prisma, withDbRetry, getSafeDatabaseHost, getHyperdriveConfig } from "@/lib/prisma";
 

@@ -75,8 +75,8 @@ export default function StudentAssessments() {
   const filteredAssessments = assessments.filter((a) => {
     if (filter === "completed" && a.status !== "completed") return false;
     if (filter === "upcoming" && a.status !== "upcoming") return false;
-    if (filter === "coding" && a.type !== "coding") return false;
-    if (filter === "aptitude" && a.type !== "aptitude") return false;
+    if (filter === "coding" && a.type?.toLowerCase() !== "coding") return false;
+    if (filter === "aptitude" && a.type?.toLowerCase() !== "aptitude") return false;
 
     if (search && !a.title.toLowerCase().includes(search.toLowerCase()))
       return false;
@@ -84,7 +84,10 @@ export default function StudentAssessments() {
   });
 
   const handleAction = (assessment: AssessmentItem) => {
-    if (assessment.type === "coding") {
+    const isCoding =
+      assessment.type?.toLowerCase() === "coding" ||
+      assessment.type?.toLowerCase() === "mixed";
+    if (isCoding) {
       router.push(`/student/assessments/coding?assessmentId=${assessment.id}`);
     } else {
       router.push(`/student/assessments/aptitude?assessmentId=${assessment.id}`);
