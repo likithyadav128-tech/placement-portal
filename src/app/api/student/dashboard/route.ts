@@ -54,7 +54,8 @@ export async function GET(req: Request) {
     // 2. Secondary check: Cookie session
     if (!authUser) {
       try {
-        const supabase = await createClient();
+        const rawCookie = req.headers.get("cookie") || undefined;
+        const supabase = await createClient(rawCookie);
         const {
           data: { user },
           error: authError,

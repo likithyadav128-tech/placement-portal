@@ -29,14 +29,23 @@ export interface AuthenticatedSession {
  * 2. Existing application User record
  * 3. User status validation (ACTIVE vs BLOCKED vs INACTIVE)
  */
-export async function getCurrentUser(): Promise<DbUser | null> {
+export async function getCurrentUser(customCookieHeader?: string): Promise<DbUser | null> {
   try {
     let authUser: SupabaseUser | null = null;
     let authError: Error | null = null;
 
+    let headerStore: Awaited<ReturnType<typeof headers>> | null = null;
+    try {
+      headerStore = await headers();
+    } catch {
+      // May throw outside request context
+    }
+
+    const rawCookie = customCookieHeader || headerStore?.get("cookie") || undefined;
+
     // 1. Primary auth check: Supabase server-side cookies
     try {
-      const supabase = await createClient();
+      const supabase = await createClient(rawCookie);
       const { data, error } = await supabase.auth.getUser();
       if (!error && data?.user) {
         authUser = data.user;
@@ -50,12 +59,6 @@ export async function getCurrentUser(): Promise<DbUser | null> {
     // 2. Secondary auth check: Authorization Bearer header
     if (!authUser) {
       try {
-        let headerStore: Awaited<ReturnType<typeof headers>> | null = null;
-        try {
-          headerStore = await headers();
-        } catch {
-          // May throw outside request context
-        }
         const authHeader = headerStore?.get("authorization") || headerStore?.get("Authorization");
         if (authHeader?.trim().toLowerCase().startsWith("bearer ")) {
           const token = authHeader.trim().slice(7).trim();

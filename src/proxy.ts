@@ -11,7 +11,7 @@ export async function proxy(request: NextRequest) {
   // Static assets, api routes, and public files bypass middleware/proxy
   if (
     pathname.startsWith("/_next") ||
-    pathname.startsWith("/api/auth") ||
+    pathname.startsWith("/api") ||
     pathname.includes(".")
   ) {
     return NextResponse.next();
