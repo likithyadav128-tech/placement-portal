@@ -18,7 +18,16 @@ export interface RequestDatabaseContext {
   hyperdrive?: HyperdriveBinding;
 }
 
-export const requestDatabaseStorage = new AsyncLocalStorage<RequestDatabaseContext>();
+// Global scope storage to prevent duplicate AsyncLocalStorage instances across bundled chunks
+const globalStorage = globalThis as unknown as {
+  __requestDatabaseStorage?: AsyncLocalStorage<RequestDatabaseContext>;
+  __HYPERDRIVE_CONNECTION_STRING?: string;
+  env?: { HYPERDRIVE?: HyperdriveBinding };
+};
+
+export const requestDatabaseStorage: AsyncLocalStorage<RequestDatabaseContext> =
+  globalStorage.__requestDatabaseStorage ||
+  (globalStorage.__requestDatabaseStorage = new AsyncLocalStorage<RequestDatabaseContext>());
 
 /**
  * Retrieves the Hyperdrive configuration if running within a Cloudflare Worker request
@@ -34,6 +43,14 @@ export function getHyperdriveConfig(): HyperdriveBinding | undefined {
       connectionString: process.env.HYPERDRIVE_CONNECTION_STRING,
     };
   }
+  if (globalStorage.__HYPERDRIVE_CONNECTION_STRING) {
+    return {
+      connectionString: globalStorage.__HYPERDRIVE_CONNECTION_STRING,
+    };
+  }
+  if (globalStorage.env?.HYPERDRIVE?.connectionString) {
+    return globalStorage.env.HYPERDRIVE;
+  }
   return undefined;
 }
 
@@ -48,8 +65,12 @@ const globalForPrisma = globalThis as unknown as {
  * passwords, or query string parameters.
  */
 export function getSafeDatabaseHost(urlStr?: string): string {
-  const url = urlStr || process.env.DATABASE_URL;
+  const hyperdrive = getHyperdriveConfig();
+  const url = urlStr || hyperdrive?.connectionString || process.env.DATABASE_URL;
   if (!url) return "NOT_SET";
+  if (hyperdrive?.connectionString && url === hyperdrive.connectionString) {
+    return "hyperdrive";
+  }
   try {
     const parsed = new URL(url);
     return parsed.hostname || "unknown";
@@ -60,8 +81,14 @@ export function getSafeDatabaseHost(urlStr?: string): string {
 
 /**
  * Normalizes the database URL with connection limits, timeouts, and PgBouncer parameters.
+ * When Hyperdrive is available in the Cloudflare Worker runtime, prioritizes it over direct DATABASE_URL.
  */
 export function getDatabaseUrl(): string | undefined {
+  const hyperdrive = getHyperdriveConfig();
+  if (hyperdrive?.connectionString) {
+    return hyperdrive.connectionString;
+  }
+
   const url = process.env.DATABASE_URL;
   if (!url) return undefined;
   let fixedUrl = url;
@@ -110,7 +137,11 @@ export function createRequestPrismaClient(dbUrlOverride?: string): {
   }
 
   const isLocal = dbUrl.includes("localhost") || dbUrl.includes("127.0.0.1");
-  const isHyperdrive = Boolean(hyperdrive?.connectionString && dbUrl === hyperdrive.connectionString);
+  const isHyperdrive = Boolean(
+    (hyperdrive?.connectionString && dbUrl === hyperdrive.connectionString) ||
+    dbUrl.includes("hyperdrive") ||
+    dbUrl.includes(".cloudflare.com")
+  );
 
   const pool = new Pool({
     connectionString: dbUrl,
@@ -154,16 +185,22 @@ export function getPrismaClient(): PrismaClient {
     return store.prisma;
   }
 
-  const dbUrl = getDatabaseUrl();
+  const hyperdrive = getHyperdriveConfig();
+  const dbUrl = hyperdrive?.connectionString || getDatabaseUrl();
   if (!globalForPrisma.prisma || (!globalForPrisma.hasAdapter && dbUrl)) {
     const isLocal = dbUrl?.includes("localhost") || dbUrl?.includes("127.0.0.1");
+    const isHyperdrive = Boolean(
+      (hyperdrive?.connectionString && dbUrl === hyperdrive.connectionString) ||
+      dbUrl?.includes("hyperdrive") ||
+      dbUrl?.includes(".cloudflare.com")
+    );
     const pool = dbUrl
       ? new Pool({
           connectionString: dbUrl,
-          ssl: isLocal ? undefined : { rejectUnauthorized: false },
-          max: 5,
-          connectionTimeoutMillis: 30000,
-          idleTimeoutMillis: 30000,
+          ssl: isLocal || isHyperdrive ? undefined : { rejectUnauthorized: false },
+          max: 1,
+          connectionTimeoutMillis: 15000,
+          idleTimeoutMillis: 15000,
         })
       : undefined;
 

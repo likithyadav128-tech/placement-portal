@@ -38,13 +38,6 @@ export async function createClient(customCookieHeader?: string) {
         if (customCookieHeader) {
           return parseCookieHeader(customCookieHeader);
         }
-        const rawHeaderCookie = headerStore?.get("cookie");
-        if (rawHeaderCookie) {
-          const parsed = parseCookieHeader(rawHeaderCookie);
-          if (parsed && parsed.length > 0) {
-            return parsed;
-          }
-        }
         if (cookieStore) {
           try {
             const list = cookieStore.getAll();
@@ -53,6 +46,13 @@ export async function createClient(customCookieHeader?: string) {
             }
           } catch {
             // Ignore if cookieStore access fails
+          }
+        }
+        const rawHeaderCookie = headerStore?.get("cookie");
+        if (rawHeaderCookie) {
+          const parsed = parseCookieHeader(rawHeaderCookie);
+          if (parsed && parsed.length > 0) {
+            return parsed;
           }
         }
         return [];

@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { headers } from "next/headers";
-import { createClient as createSupabaseClient, type User as SupabaseUser } from "@supabase/supabase-js";
+import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
-import { prisma, withDbRetry, getSafeDatabaseHost } from "@/lib/prisma";
+import { prisma, withDbRetry, getSafeDatabaseHost, getHyperdriveConfig } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
 
@@ -388,14 +388,14 @@ export async function GET(request?: Request) {
     };
 
     // 2. Preflight database verification
-    const hasDbUrl = Boolean(process.env.DATABASE_URL);
+    const hasDbUrl = Boolean(process.env.DATABASE_URL || getHyperdriveConfig()?.connectionString);
     const dbHost = getSafeDatabaseHost();
     console.log(
       `[auth/me:db] Initiating DB lookup for Supabase user: ${authUser.id}. hasDbUrl=${hasDbUrl}, dbHost=${dbHost}`
     );
 
     if (!hasDbUrl) {
-      console.error("[auth/me:db] DATABASE_URL is not set in Cloudflare Worker runtime environment.");
+      console.error("[auth/me:db] Neither DATABASE_URL nor Hyperdrive connection is available in runtime.");
       return NextResponse.json(
         {
           error: "Database configuration error",
@@ -407,7 +407,7 @@ export async function GET(request?: Request) {
             hasDirectUrl: Boolean(process.env.DIRECT_URL),
             name: "MissingEnvironmentVariableError",
             code: "ENV_MISSING",
-            message: "DATABASE_URL environment variable is not defined in Cloudflare Worker runtime.",
+            message: "Neither DATABASE_URL nor Hyperdrive binding is configured in Cloudflare Worker runtime.",
           },
         },
         { status: 500 }

@@ -41,11 +41,9 @@ export async function getCurrentUser(customCookieHeader?: string): Promise<DbUse
       // May throw outside request context
     }
 
-    const rawCookie = customCookieHeader || headerStore?.get("cookie") || undefined;
-
     // 1. Primary auth check: Supabase server-side cookies
     try {
-      const supabase = await createClient(rawCookie);
+      const supabase = await createClient(customCookieHeader);
       const { data, error } = await supabase.auth.getUser();
       if (!error && data?.user) {
         authUser = data.user;
