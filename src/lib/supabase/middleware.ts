@@ -7,11 +7,7 @@ import { type NextRequest, NextResponse } from "next/server";
  * Used in Next.js middleware/proxy to keep the session alive and validate auth state.
  */
 export async function updateSession(request: NextRequest) {
-  let response = NextResponse.next({
-    request: {
-      headers: request.headers,
-    },
-  });
+  let response = NextResponse.next();
 
   const supabaseUrl =
     process.env.NEXT_PUBLIC_SUPABASE_URL && !process.env.NEXT_PUBLIC_SUPABASE_URL.includes("placeholder-project")
@@ -25,21 +21,16 @@ export async function updateSession(request: NextRequest) {
   const supabase = createServerClient(supabaseUrl, supabaseAnonKey, {
     cookies: {
       getAll() {
-        const cookies = request.cookies.getAll();
-        if (cookies && cookies.length > 0) {
-          return cookies;
-        }
         const raw = request.headers.get("cookie");
         if (raw) {
-          return parseCookieHeader(raw);
+          const parsed = parseCookieHeader(raw);
+          if (parsed && parsed.length > 0) {
+            return parsed;
+          }
         }
-        return [];
+        return request.cookies.getAll();
       },
       setAll(cookiesToSet) {
-        cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value));
-        response = NextResponse.next({
-          request,
-        });
         cookiesToSet.forEach(({ name, value, options }) =>
           response.cookies.set(name, value, options)
         );

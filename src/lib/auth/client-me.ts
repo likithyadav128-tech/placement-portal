@@ -35,23 +35,17 @@ export async function fetchAuthMe(
     }
   }
 
-  // If unauthenticated, do NOT fire a failing request to /api/auth/me without an Authorization header
-  if (!accessToken) {
-    return {
-      user: null,
-      status: 401,
-      error: "Unauthorized: No active session or access token available.",
-      ok: false,
-    };
-  }
-
   const executeFetch = async () => {
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    if (accessToken) {
+      headers["Authorization"] = `Bearer ${accessToken}`;
+    }
     return fetch("/api/auth/me", {
       method: "GET",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
-      },
+      headers,
+      credentials: "include",
       cache: "no-store",
     });
   };

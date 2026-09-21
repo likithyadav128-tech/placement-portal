@@ -26,18 +26,23 @@ export async function guardPortalRoute(requiredRole: Role) {
       throw err;
     }
     if (err instanceof UnregisteredUserError) {
+      console.warn("[portal-guard] UnregisteredUserError -> redirecting to /login?error=unregistered");
       redirect("/login?error=unregistered");
     }
     if (err instanceof BlockedUserError) {
+      console.warn("[portal-guard] BlockedUserError -> redirecting to /login?error=blocked");
       redirect("/login?error=blocked");
     }
     if (err instanceof InactiveUserError) {
+      console.warn("[portal-guard] InactiveUserError -> redirecting to /login?error=inactive");
       redirect("/login?error=inactive");
     }
+    console.error("[portal-guard] Unexpected error in guardPortalRoute:", err);
     redirect("/login");
   }
 
   if (!user) {
+    console.warn("[portal-guard] guardPortalRoute: No user resolved from session/database -> redirecting to /login");
     redirect("/login");
   }
 
