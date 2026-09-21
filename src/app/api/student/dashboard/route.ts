@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { createClient as createDirectClient, type User as SupabaseUser } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
 import { prisma, withDbRetry } from "@/lib/prisma";
 import { syncRecommendationsForStudent } from "@/lib/recommendations/recommendationEngine";
@@ -11,7 +12,7 @@ export const dynamic = "force-dynamic";
  * Secure server-side data resolver for Student Dashboard.
  *
  * Requirements:
- * 1. Authenticates session via Supabase server-side cookies.
+ * 1. Authenticates session via Supabase server-side cookies or Bearer token.
  * 2. Resolves auth.users.id -> public.User -> public.Student.
  * 3. Enforces STUDENT role.
  * 4. Queries REAL PostgreSQL data only (PerformanceRecord, FocusArea, Recommendation, Assessment, Roadmap).
@@ -22,13 +23,52 @@ export const dynamic = "force-dynamic";
  */
 export async function GET(req: Request) {
   try {
-    const supabase = await createClient();
-    const {
-      data: { user: authUser },
-      error: authError,
-    } = await supabase.auth.getUser();
+    let authUser: SupabaseUser | null = null;
 
-    if (authError || !authUser) {
+    // 1. Primary check: Bearer token header if present
+    const authHeader = req.headers.get("authorization") || req.headers.get("Authorization");
+    if (authHeader?.trim().toLowerCase().startsWith("bearer ")) {
+      const token = authHeader.trim().slice(7).trim();
+      const supabaseUrl =
+        process.env.NEXT_PUBLIC_SUPABASE_URL && !process.env.NEXT_PUBLIC_SUPABASE_URL.includes("placeholder-project")
+          ? process.env.NEXT_PUBLIC_SUPABASE_URL
+          : "https://zfouzydarrtqfmrqjvsd.supabase.co";
+      const supabaseAnonKey =
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY && !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY.includes("placeholder-anon")
+          ? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+          : "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inpmb3V6eWRhcnJ0cWZtcnFqdnNkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODkwNTQ3MzcsImV4cCI6MjEwNDYzMDczN30.juQ-vhvvKx3AysRrRmEZkz5C4dU7TWwh52l8EfvN0QE";
+
+      try {
+        const directClient = createDirectClient(supabaseUrl, supabaseAnonKey, {
+          auth: { persistSession: false, autoRefreshToken: false },
+        });
+        const { data, error } = await directClient.auth.getUser(token);
+        if (!error && data?.user) {
+          authUser = data.user;
+        }
+      } catch (directErr) {
+        console.warn("[api/student/dashboard] Direct token verification exception:", directErr);
+      }
+    }
+
+    // 2. Secondary check: Cookie session
+    if (!authUser) {
+      try {
+        const supabase = await createClient();
+        const {
+          data: { user },
+          error: authError,
+        } = await supabase.auth.getUser();
+
+        if (!authError && user) {
+          authUser = user;
+        }
+      } catch (cookieErr) {
+        console.warn("[api/student/dashboard] Cookie verification exception:", cookieErr);
+      }
+    }
+
+    if (!authUser) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 

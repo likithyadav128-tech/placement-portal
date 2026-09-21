@@ -1,5 +1,5 @@
 import { createServerClient, parseCookieHeader } from "@supabase/ssr";
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 
 /**
  * Creates an authenticated Supabase client for Server Components,
@@ -8,11 +8,18 @@ import { cookies } from "next/headers";
  */
 export async function createClient(customCookieHeader?: string) {
   let cookieStore: Awaited<ReturnType<typeof cookies>> | null = null;
+  let headerStore: Awaited<ReturnType<typeof headers>> | null = null;
+
   if (!customCookieHeader) {
     try {
       cookieStore = await cookies();
     } catch {
       // In edge runtimes / contexts without AsyncLocalStorage, cookies() may throw
+    }
+    try {
+      headerStore = await headers();
+    } catch {
+      // In edge runtimes / contexts without AsyncLocalStorage, headers() may throw
     }
   }
 
@@ -33,10 +40,17 @@ export async function createClient(customCookieHeader?: string) {
         }
         if (cookieStore) {
           try {
-            return cookieStore.getAll();
+            const list = cookieStore.getAll();
+            if (list && list.length > 0) {
+              return list;
+            }
           } catch {
-            return [];
+            // Ignore if cookieStore access fails
           }
+        }
+        const rawHeaderCookie = headerStore?.get("cookie");
+        if (rawHeaderCookie) {
+          return parseCookieHeader(rawHeaderCookie);
         }
         return [];
       },
@@ -48,7 +62,7 @@ export async function createClient(customCookieHeader?: string) {
           });
         } catch {
           // The `setAll` method was called from a Server Component.
-          // This can be ignored if middleware is refreshing user sessions.
+          // This can be ignored if middleware/proxy is refreshing user sessions.
         }
       },
     },

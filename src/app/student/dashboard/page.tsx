@@ -33,6 +33,7 @@ import { DashboardSkeleton, ErrorState } from "@/components/feedback/states";
 import { getGreeting } from "@/lib/utils";
 import { PageHeader } from "@/components/layout/page-header";
 import { useRole } from "@/context/RoleContext";
+import { createClient } from "@/lib/supabase/client";
 
 interface DashboardData {
   student: {
@@ -116,7 +117,17 @@ export default function StudentDashboard() {
   const loadDashboardData = useCallback(async () => {
     try {
       setIsLoading(true);
-      const res = await fetch(`/api/student/dashboard?timeRange=${timeRange}`);
+      const supabase = createClient();
+      const session = (await supabase.auth.getSession()).data?.session;
+      const headers: Record<string, string> = {};
+      if (session?.access_token) {
+        headers["Authorization"] = `Bearer ${session.access_token}`;
+      }
+
+      const res = await fetch(`/api/student/dashboard?timeRange=${timeRange}`, {
+        headers,
+        credentials: "include",
+      });
       if (!res.ok) {
         if (res.status === 401) {
           router.push("/login");

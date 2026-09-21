@@ -2,13 +2,13 @@ import { type NextRequest, NextResponse } from "next/server";
 import { updateSession } from "@/lib/supabase/middleware";
 
 /**
- * Next.js Edge Middleware for route protection and session management.
+ * Next.js 16 Edge Proxy for route protection and session management.
  * Keeps Supabase auth token fresh on incoming requests.
  */
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  // Static assets, api routes, and public files bypass middleware
+  // Static assets, api routes, and public files bypass middleware/proxy
   if (
     pathname.startsWith("/_next") ||
     pathname.startsWith("/api/auth") ||
@@ -40,6 +40,8 @@ export async function middleware(request: NextRequest) {
 
   return response;
 }
+
+export default proxy;
 
 export const config = {
   matcher: [
