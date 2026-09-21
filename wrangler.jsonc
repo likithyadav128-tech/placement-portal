@@ -15,6 +15,12 @@
   },
   "cache": { "enabled": true },
   "version_metadata": { "binding": "CF_VERSION_METADATA" },
+  "hyperdrive": [
+    {
+      "binding": "HYPERDRIVE",
+      "id": "af5b7d67a8f540479c365286b844798b"
+    }
+  ],
   "observability": {
     "enabled": true,
     "head_sampling_rate": 1,
@@ -26,5 +32,15 @@
   "vars": {
     "NEXT_PUBLIC_SUPABASE_URL": "https://zfouzydarrtqfmrqjvsd.supabase.co",
     "NEXT_PUBLIC_SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inpmb3V6eWRhcnJ0cWZtcnFqdnNkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODkwNTQ3MzcsImV4cCI6MjEwNDYzMDczN30.juQ-vhvvKx3AysRrRmEZkz5C4dU7TWwh52l8EfvN0QE"
+  },
+  "env": {
+    "preview": {
+      "hyperdrive": [
+        {
+          "binding": "HYPERDRIVE",
+          "id": "af5b7d67a8f540479c365286b844798b"
+        }
+      ]
+    }
   }
 }
