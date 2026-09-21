@@ -29,6 +29,46 @@ export default defineConfig({
         find: /^#main-entry-point$/,
         replacement: path.resolve(__dirname, "node_modules/.prisma/client/wasm.js"),
       },
+      {
+        find: /^events$/,
+        replacement: "node:events",
+      },
+      {
+        find: /^stream$/,
+        replacement: "node:stream",
+      },
+      {
+        find: /^util$/,
+        replacement: "node:util",
+      },
+      {
+        find: /^crypto$/,
+        replacement: "node:crypto",
+      },
+      {
+        find: /^buffer$/,
+        replacement: "node:buffer",
+      },
+      {
+        find: /^string_decoder$/,
+        replacement: "node:string_decoder",
+      },
+      {
+        find: /^net$/,
+        replacement: "node:net",
+      },
+      {
+        find: /^tls$/,
+        replacement: "node:tls",
+      },
+      {
+        find: /^dns$/,
+        replacement: "node:dns",
+      },
+      {
+        find: /^fs$/,
+        replacement: "node:fs",
+      },
     ],
   },
 });
