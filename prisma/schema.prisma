@@ -35,6 +35,9 @@ enum AssessmentType {
   CODING
   APTITUDE
   MIXED
+  QUIZ
+  THEORY
+  ASSIGNMENT
 }
 
 enum ContentStatus {
@@ -247,6 +250,19 @@ model Assessment {
   createdAt      DateTime       @default(now())
   updatedAt      DateTime       @updatedAt
 
+  // Hierarchy and Schedule fields
+  year           String?        // "4th Year" | "3rd Year" | "2nd Year"
+  branch         String?        // "AI & DS" | "AI & ML" | "CSE" | "Cyber Security"
+  startDate      DateTime?
+  endDate        DateTime?
+  maxMarks       Float?         @default(100)
+
+  // File metadata for uploaded assessments (Supabase Storage)
+  fileName       String?
+  filePath       String?
+  fileType       String?
+  fileSize       Int?
+
   codingProblems    CodingProblem[]
   aptitudeQuestions AptitudeQuestion[]
   attempts          AssessmentAttempt[]
@@ -254,6 +270,7 @@ model Assessment {
   @@index([status])
   @@index([type])
   @@index([createdAt])
+  @@index([year, branch])
 }
 
 model CodingProblem {
