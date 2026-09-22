@@ -1,25 +1,38 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, use } from "react";
 import Link from "next/link";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ErrorState } from "@/components/feedback/states";
-import { GraduationCap, FileText, Users, ArrowRight } from "lucide-react";
-import { YEARS } from "@/lib/assessment/slugs";
+import { ArrowLeft, ArrowRight, Binary, Cpu, ShieldCheck, Database } from "lucide-react";
+import { BRANCHES, slugToYear } from "@/lib/assessment/slugs";
 
-interface YearStats {
+interface BranchStats {
   assessmentCount: number;
   studentCount: number;
 }
 
 interface ApiResponse {
-  yearStats: Record<string, YearStats>;
-  totalCohortStudents: number;
+  branchStats: Record<string, BranchStats>;
+  cohortStats?: Record<string, Record<string, BranchStats>>;
 }
 
-export default function FacultyAssessmentsYearPage() {
+const BRANCH_ICONS: Record<string, typeof Binary> = {
+  "AI & DS": Database,
+  "AI & ML": Cpu,
+  "CSE": Binary,
+  "Cyber Security": ShieldCheck,
+};
+
+export default function FacultyAssessmentsBranchPage(props: {
+  params: Promise<{ year: string }>;
+}) {
+  const params = use(props.params);
+  const yearSlug = params.year;
+  const yearLabel = slugToYear(yearSlug);
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<ApiResponse | null>(null);
@@ -29,9 +42,9 @@ export default function FacultyAssessmentsYearPage() {
       try {
         setLoading(true);
         setError(null);
-        const res = await fetch("/api/faculty/assessments");
+        const res = await fetch(`/api/faculty/assessments?year=${encodeURIComponent(yearLabel)}`);
         if (!res.ok) {
-          throw new Error("Failed to load academic years data");
+          throw new Error("Failed to load departments data");
         }
         const json = (await res.json()) as ApiResponse;
         setData(json);
@@ -42,7 +55,7 @@ export default function FacultyAssessmentsYearPage() {
       }
     }
     fetchStats();
-  }, []);
+  }, [yearLabel]);
 
   if (error) {
     return (
@@ -53,73 +66,88 @@ export default function FacultyAssessmentsYearPage() {
   }
 
   return (
-    <div className="p-6 max-w-6xl mx-auto space-y-8">
+    <div className="p-6 max-w-6xl mx-auto space-y-6">
+      {/* Back button & Breadcrumb */}
+      <div className="flex items-center gap-3">
+        <Link href="/faculty/assessments">
+          <Button variant="ghost" size="sm" className="h-8 gap-1 text-slate-600 hover:text-slate-900">
+            <ArrowLeft className="h-4 w-4" />
+            Back to Assessments
+          </Button>
+        </Link>
+        <span className="text-slate-300">/</span>
+        <span className="text-xs font-medium text-slate-500">{yearLabel}</span>
+      </div>
+
       {/* Header */}
       <div>
         <h1 className="text-2xl font-bold tracking-tight text-slate-900">
-          Faculty Assessments
+          {yearLabel}
         </h1>
         <p className="text-sm text-slate-500 mt-1">
-          Select an academic year to manage curriculum assessments, student cohorts, and performance evaluation.
+          Select a department or branch to view assessments, cohorts, and performance.
         </p>
       </div>
 
-      {/* 3 Year Cards */}
+      {/* 4 Branch Cards */}
       {loading ? (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {[1, 2, 3].map((i) => (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+          {[1, 2, 3, 4].map((i) => (
             <Card key={i} className="p-6">
               <Skeleton className="h-10 w-10 rounded-lg mb-4" />
-              <Skeleton className="h-6 w-32 mb-2" />
-              <Skeleton className="h-4 w-24 mb-6" />
+              <Skeleton className="h-6 w-24 mb-2" />
+              <Skeleton className="h-4 w-20 mb-6" />
               <Skeleton className="h-10 w-full rounded-lg" />
             </Card>
           ))}
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {YEARS.map((year) => {
-            const stats = data?.yearStats[year.label] || { assessmentCount: 0, studentCount: 0 };
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+          {BRANCHES.map((branch) => {
+            const Icon = BRANCH_ICONS[branch.label] || Binary;
+            // Prefer cohort-specific stats for this year + branch if available
+            const stats =
+              data?.cohortStats?.[yearLabel]?.[branch.label] ||
+              data?.branchStats?.[branch.label] ||
+              { assessmentCount: 0, studentCount: 0 };
+
             return (
               <Card
-                key={year.slug}
+                key={branch.slug}
                 className="group hover:border-blue-300 hover:shadow-md transition-all duration-200 border-slate-200"
               >
                 <CardContent className="p-6 flex flex-col justify-between h-full space-y-6">
                   <div>
                     <div className="h-12 w-12 rounded-xl bg-blue-50 border border-blue-100 flex items-center justify-center text-blue-600 mb-4 group-hover:scale-105 transition-transform">
-                      <GraduationCap className="h-6 w-6" />
+                      <Icon className="h-6 w-6" />
                     </div>
-                    <h2 className="text-xl font-bold text-slate-900">
-                      {year.label}
+                    <h2 className="text-lg font-bold text-slate-900">
+                      {branch.label}
                     </h2>
                     <p className="text-xs text-slate-400 mt-0.5">
-                      Batch Curriculum & Evaluations
+                      Engineering Cohort
                     </p>
                   </div>
 
-                  <div className="space-y-2.5 pt-2 border-t border-slate-100 text-sm">
+                  <div className="space-y-2 pt-2 border-t border-slate-100 text-sm">
                     <div className="flex items-center justify-between text-slate-600">
-                      <span className="flex items-center gap-2">
-                        <FileText className="h-4 w-4 text-slate-400" />
-                        Assessments
-                      </span>
-                      <span className="font-semibold text-slate-900">
-                        {stats.assessmentCount}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between text-slate-600">
-                      <span className="flex items-center gap-2">
-                        <Users className="h-4 w-4 text-slate-400" />
-                        Students
-                      </span>
+                      <span>Students</span>
                       <span className="font-semibold text-slate-900">
                         {stats.studentCount}
                       </span>
                     </div>
+                    <div className="flex items-center justify-between text-slate-600">
+                      <span>Assessments</span>
+                      <span className="font-semibold text-slate-900">
+                        {stats.assessmentCount}
+                      </span>
+                    </div>
                   </div>
 
-                  <Link href={`/faculty/assessments/${year.slug}`} className="block w-full">
+                  <Link
+                    href={`/faculty/assessments/${yearSlug}/${branch.slug}`}
+                    className="block w-full"
+                  >
                     <Button
                       variant="outline"
                       className="w-full justify-between text-blue-600 border-blue-200 hover:bg-blue-50 group-hover:border-blue-400"

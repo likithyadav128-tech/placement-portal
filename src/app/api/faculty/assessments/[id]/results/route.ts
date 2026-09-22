@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/auth/rbac";
 import { prisma, withDbRetry } from "@/lib/prisma";
+import { matchesYear, matchesBranch } from "@/lib/assessment/slugs";
 
 export const dynamic = "force-dynamic";
 
@@ -41,8 +42,11 @@ export async function GET(
       return NextResponse.json({ error: "Assessment not found." }, { status: 404 });
     }
 
-    // 2. Resolve cohort students
-    let cohortStudents: Array<{
+    // 2. Resolve cohort students matching assessment's Year and Branch
+    const targetYear = assessment.year || "3rd Year";
+    const targetBranch = assessment.branch || "AI & DS";
+
+    let allAssignedStudents: Array<{
       id: string;
       name: string;
       email: string;
@@ -73,7 +77,7 @@ export async function GET(
         return NextResponse.json({ error: "Faculty profile not found." }, { status: 403 });
       }
 
-      cohortStudents = faculty.assignedStudents.map((a) => ({
+      allAssignedStudents = faculty.assignedStudents.map((a) => ({
         id: a.student.id,
         name: a.student.user.name,
         email: a.student.user.email,
@@ -92,7 +96,7 @@ export async function GET(
         })
       );
 
-      cohortStudents = allStudents.map((s) => ({
+      allAssignedStudents = allStudents.map((s) => ({
         id: s.id,
         name: s.user.name,
         email: s.user.email,
@@ -101,6 +105,11 @@ export async function GET(
         year: s.year,
       }));
     }
+
+    // Filter cohort strictly to this assessment's Year and Branch
+    const cohortStudents = allAssignedStudents.filter(
+      (s) => matchesYear(s.year, targetYear) && matchesBranch(s.department, targetBranch)
+    );
 
     // 3. Fetch all attempts for this assessment by cohort students
     const studentIds = cohortStudents.map((s) => s.id);
@@ -123,20 +132,16 @@ export async function GET(
       }
     }
 
-    // 4. Build student result rows
+    const maxMarks = assessment.maxMarks || 100;
+
+    // 4. Build student result rows (LEFT JOIN semantics: includes non-attempted cohort students)
     const studentResults = cohortStudents.map((s) => {
       const attempt = bestAttemptByStudent.get(s.id);
 
       if (attempt) {
         const pct = attempt.percentage !== null ? Math.round(attempt.percentage * 10) / 10 : 0;
         const score = attempt.score !== null ? Math.round(attempt.score * 10) / 10 : 0;
-
-        let status: "Passed" | "Failed" | "Needs Attention" = "Passed";
-        if (pct < 50) {
-          status = "Needs Attention";
-        } else if (pct < 60) {
-          status = "Failed";
-        }
+        const result: "PASS" | "FAIL" = pct >= 50 ? "PASS" : "FAIL";
 
         return {
           studentId: s.id,
@@ -147,8 +152,11 @@ export async function GET(
           year: s.year,
           attemptId: attempt.id,
           score,
+          maxMarks,
           percentage: pct,
-          status,
+          result,
+          status: result === "PASS" ? "Passed" : "Failed",
+          attemptStatus: "Attempted" as const,
           submissionTime: attempt.submittedAt ? attempt.submittedAt.toISOString() : null,
           timeTaken: formatSeconds(attempt.timeSpent),
           hasAttempt: true,
@@ -164,8 +172,11 @@ export async function GET(
         year: s.year,
         attemptId: null,
         score: null,
+        maxMarks,
         percentage: null,
+        result: "Not Evaluated" as const,
         status: "Not Attempted" as const,
+        attemptStatus: "Not Attempted" as const,
         submissionTime: null,
         timeTaken: "—",
         hasAttempt: false,
@@ -175,8 +186,8 @@ export async function GET(
     // 5. Calculate summary metrics
     const totalStudents = studentResults.length;
     const submittedResults = studentResults.filter((r) => r.hasAttempt);
-    const submittedCount = submittedResults.length;
-    const pendingCount = Math.max(0, totalStudents - submittedCount);
+    const attemptedCount = submittedResults.length;
+    const notAttemptedCount = Math.max(0, totalStudents - attemptedCount);
 
     const validPercentages = submittedResults
       .map((r) => r.percentage)
@@ -190,9 +201,9 @@ export async function GET(
     const highestScore = validPercentages.length > 0 ? Math.max(...validPercentages) : 0;
     const lowestScore = validPercentages.length > 0 ? Math.min(...validPercentages) : 0;
 
-    const passedCount = submittedResults.filter((r) => r.status === "Passed").length;
+    const passedCount = submittedResults.filter((r) => r.result === "PASS").length;
     const passPercentage =
-      submittedCount > 0 ? Math.round((passedCount / submittedCount) * 1000) / 10 : 0;
+      attemptedCount > 0 ? Math.round((passedCount / attemptedCount) * 1000) / 10 : 0;
 
     // 6. Calculate score distribution histogram
     const distribution = [
@@ -231,8 +242,10 @@ export async function GET(
       },
       summary: {
         totalStudents,
-        submittedCount,
-        pendingCount,
+        attemptedCount,
+        notAttemptedCount,
+        submittedCount: attemptedCount,
+        pendingCount: notAttemptedCount,
         averageScore,
         highestScore,
         lowestScore,

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import {
   Dialog,
   DialogContent,
@@ -42,6 +42,13 @@ export function UploadAssessmentModal({
 }: UploadAssessmentModalProps) {
   const [year, setYear] = useState(defaultYear);
   const [branch, setBranch] = useState(defaultBranch);
+
+  useEffect(() => {
+    if (open) {
+      if (defaultYear) setYear(defaultYear);
+      if (defaultBranch) setBranch(defaultBranch);
+    }
+  }, [open, defaultYear, defaultBranch]);
   const [title, setTitle] = useState("");
   const [type, setType] = useState("QUIZ");
   const [description, setDescription] = useState("");

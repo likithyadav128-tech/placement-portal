@@ -15,7 +15,6 @@ import {
   Clock,
   Calendar,
   CheckCircle2,
-  XCircle,
   Code2,
   HelpCircle,
   Loader2,

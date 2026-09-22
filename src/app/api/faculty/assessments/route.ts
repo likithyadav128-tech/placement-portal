@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/auth/rbac";
 import { prisma, withDbRetry } from "@/lib/prisma";
+import { matchesYear, matchesBranch } from "@/lib/assessment/slugs";
 import type { AssessmentType, ContentStatus } from "@prisma/client";
 
 export const dynamic = "force-dynamic";
@@ -95,9 +96,8 @@ export async function GET(request: Request) {
 
     // Get assigned students cohort
     const assignedStudents = faculty?.assignedStudents.map((a) => a.student) || [];
-    const assignedStudentIds = new Set(assignedStudents.map((s) => s.id));
 
-    // Calculate aggregate breakdown for Year and Branch cards
+    // Calculate aggregate breakdown for Year and Branch hierarchy
     const ALL_YEARS = ["4th Year", "3rd Year", "2nd Year"];
     const ALL_BRANCHES = ["AI & DS", "AI & ML", "CSE", "Cyber Security"];
 
@@ -114,69 +114,102 @@ export async function GET(request: Request) {
       "Cyber Security": { assessmentCount: 0, studentCount: 0 },
     };
 
-    // Populate student counts per year and branch from assigned cohort
+    const cohortStats: Record<string, Record<string, { assessmentCount: number; studentCount: number }>> = {
+      "4th Year": {
+        "AI & DS": { assessmentCount: 0, studentCount: 0 },
+        "AI & ML": { assessmentCount: 0, studentCount: 0 },
+        "CSE": { assessmentCount: 0, studentCount: 0 },
+        "Cyber Security": { assessmentCount: 0, studentCount: 0 },
+      },
+      "3rd Year": {
+        "AI & DS": { assessmentCount: 0, studentCount: 0 },
+        "AI & ML": { assessmentCount: 0, studentCount: 0 },
+        "CSE": { assessmentCount: 0, studentCount: 0 },
+        "Cyber Security": { assessmentCount: 0, studentCount: 0 },
+      },
+      "2nd Year": {
+        "AI & DS": { assessmentCount: 0, studentCount: 0 },
+        "AI & ML": { assessmentCount: 0, studentCount: 0 },
+        "CSE": { assessmentCount: 0, studentCount: 0 },
+        "Cyber Security": { assessmentCount: 0, studentCount: 0 },
+      },
+    };
+
+    // Populate student counts per year, branch, and cohort matrix using normalized matching
     for (const s of assignedStudents) {
-      const y = s.year.includes("4") ? "4th Year" : s.year.includes("3") ? "3rd Year" : s.year.includes("2") ? "2nd Year" : null;
-      if (y && yearStats[y]) yearStats[y].studentCount++;
+      for (const y of ALL_YEARS) {
+        if (matchesYear(s.year, y)) {
+          yearStats[y].studentCount++;
+          for (const b of ALL_BRANCHES) {
+            if (matchesBranch(s.department, b)) {
+              cohortStats[y][b].studentCount++;
+            }
+          }
+        }
+      }
 
-      const b = s.department.includes("AI") && s.department.includes("Data") ? "AI & DS"
-        : s.department.includes("AI") || s.department.includes("ML") ? "AI & ML"
-        : s.department.includes("Cyber") ? "Cyber Security"
-        : s.department.includes("Computer") || s.department.includes("CSE") ? "CSE"
-        : s.department === "AI & DS" ? "AI & DS" : null;
-
-      if (b && branchStats[b]) branchStats[b].studentCount++;
+      for (const b of ALL_BRANCHES) {
+        if (matchesBranch(s.department, b)) {
+          branchStats[b].studentCount++;
+        }
+      }
     }
 
     // Populate assessment counts per year and branch
     for (const a of rawAssessments) {
-      if (a.year && yearStats[a.year]) {
-        yearStats[a.year].assessmentCount++;
+      const aYear = a.year || "3rd Year";
+      const aBranch = a.branch || "AI & DS";
+
+      if (yearStats[aYear]) {
+        yearStats[aYear].assessmentCount++;
       }
-      if (a.branch && branchStats[a.branch]) {
-        branchStats[a.branch].assessmentCount++;
+      if (branchStats[aBranch]) {
+        branchStats[aBranch].assessmentCount++;
+      }
+      if (cohortStats[aYear]?.[aBranch]) {
+        cohortStats[aYear][aBranch].assessmentCount++;
       }
     }
 
-    // Format assessments with real participation metrics
+    // Format assessments with strictly cohort-authorized participation metrics
     const formatted = rawAssessments.map((a) => {
       const computedStatus = computeAssessmentStatus(a.status, a.startDate, a.endDate);
       const totalQuestions = a.aptitudeQuestions.length + a.codingProblems.length;
+      const targetYear = a.year || "3rd Year";
+      const targetBranch = a.branch || "AI & DS";
 
-      // Filter attempts to assigned cohort students (or all if management)
-      const relevantAttempts = user.role === "MANAGEMENT"
-        ? a.attempts
-        : a.attempts.filter((att) => assignedStudentIds.has(att.studentId));
+      // 1. Identify eligible students assigned to this faculty matching this assessment's Year and Branch
+      const cohortStudents = assignedStudents.filter(
+        (s) => matchesYear(s.year, targetYear) && matchesBranch(s.department, targetBranch)
+      );
+      const cohortStudentIds = new Set(cohortStudents.map((s) => s.id));
 
-      const validScores = relevantAttempts
-        .map((att) => att.percentage)
-        .filter((pct): pct is number => pct !== null && pct !== undefined);
+      // 2. Identify attempts submitted by these specific cohort students
+      const cohortAttempts = a.attempts.filter((att) => cohortStudentIds.has(att.studentId));
+
+      // 3. Count DISTINCT students in the cohort who attempted
+      const attemptedStudentIds = new Set(cohortAttempts.map((att) => att.studentId));
+
+      // 4. Calculate best scores for attempted students
+      const bestPercentages: number[] = [];
+      for (const sId of attemptedStudentIds) {
+        const studentAttempts = cohortAttempts.filter((att) => att.studentId === sId);
+        const validScores = studentAttempts
+          .map((att) => att.percentage)
+          .filter((pct): pct is number => pct !== null && pct !== undefined);
+        if (validScores.length > 0) {
+          bestPercentages.push(Math.max(...validScores));
+        }
+      }
 
       const avgScore =
-        validScores.length > 0
-          ? Math.round((validScores.reduce((sum, val) => sum + val, 0) / validScores.length) * 10) / 10
+        bestPercentages.length > 0
+          ? Math.round((bestPercentages.reduce((sum, val) => sum + val, 0) / bestPercentages.length) * 10) / 10
           : null;
 
-      // Count cohort students matching this assessment's year and branch
-      const cohortStudents = assignedStudents.filter((s) => {
-        if (a.year) {
-          const matchYear = (a.year === "3rd Year" && s.year.includes("3")) ||
-                            (a.year === "4th Year" && s.year.includes("4")) ||
-                            (a.year === "2nd Year" && s.year.includes("2"));
-          if (!matchYear) return false;
-        }
-        if (a.branch) {
-          const sDept = s.department.toUpperCase();
-          const bMatch = (a.branch === "AI & DS" && (sDept.includes("AI") && (sDept.includes("DS") || sDept.includes("DATA")))) ||
-                         (a.branch === "CSE" && (sDept.includes("CSE") || sDept.includes("COMPUTER"))) ||
-                         (a.branch === "Cyber Security" && sDept.includes("CYBER")) ||
-                         (a.branch === "AI & ML" && sDept.includes("ML"));
-          if (!bMatch) return false;
-        }
-        return true;
-      });
-
-      const totalCohortSize = Math.max(cohortStudents.length, relevantAttempts.length);
+      const studentsCount = cohortStudents.length;
+      const submissionsCount = attemptedStudentIds.size;
+      const notAttemptedCount = Math.max(0, studentsCount - submissionsCount);
 
       return {
         id: a.id,
@@ -188,8 +221,8 @@ export async function GET(request: Request) {
         totalQuestions,
         status: a.status.toLowerCase(),
         computedStatus,
-        year: a.year || "3rd Year",
-        branch: a.branch || "AI & DS",
+        year: targetYear,
+        branch: targetBranch,
         startDate: a.startDate ? a.startDate.toISOString() : null,
         endDate: a.endDate ? a.endDate.toISOString() : a.deadline ? a.deadline.toISOString() : null,
         maxMarks: a.maxMarks || 100,
@@ -200,8 +233,9 @@ export async function GET(request: Request) {
         uploadedBy: a.createdBy?.user?.name || "Placement Cell",
         uploadedById: a.createdById,
         createdAt: a.createdAt.toISOString(),
-        studentsCount: totalCohortSize,
-        submissionsCount: relevantAttempts.length,
+        studentsCount,
+        submissionsCount,
+        notAttemptedCount,
         averageScore: avgScore,
       };
     });
@@ -210,11 +244,19 @@ export async function GET(request: Request) {
     let filtered = formatted;
 
     if (yearFilter && yearFilter !== "All") {
-      filtered = filtered.filter((a) => a.year.toLowerCase() === yearFilter.toLowerCase());
+      filtered = filtered.filter(
+        (a) => a.year.toLowerCase() === yearFilter.toLowerCase() ||
+               matchesYear(a.year, yearFilter) ||
+               matchesYear(yearFilter, a.year)
+      );
     }
 
     if (branchFilter && branchFilter !== "All") {
-      filtered = filtered.filter((a) => a.branch.toLowerCase() === branchFilter.toLowerCase());
+      filtered = filtered.filter(
+        (a) => a.branch.toLowerCase() === branchFilter.toLowerCase() ||
+               matchesBranch(a.branch, branchFilter) ||
+               matchesBranch(branchFilter, a.branch)
+      );
     }
 
     if (search) {
@@ -229,10 +271,20 @@ export async function GET(request: Request) {
     }
 
     if (statusFilter && statusFilter !== "all") {
-      filtered = filtered.filter((a) =>
-        a.computedStatus === statusFilter ||
-        a.status === statusFilter
-      );
+      if (statusFilter === "completed") {
+        filtered = filtered.filter((a) =>
+          a.computedStatus === "closed" ||
+          a.status === "archived" ||
+          a.submissionsCount > 0 ||
+          a.computedStatus === "active" ||
+          a.status === "published"
+        );
+      } else {
+        filtered = filtered.filter((a) =>
+          a.computedStatus === statusFilter ||
+          a.status === statusFilter
+        );
+      }
     }
 
     const activeCount = formatted.filter(
@@ -245,6 +297,7 @@ export async function GET(request: Request) {
       activeCount,
       yearStats,
       branchStats,
+      cohortStats,
       allYears: ALL_YEARS,
       allBranches: ALL_BRANCHES,
       totalCohortStudents: assignedStudents.length,
