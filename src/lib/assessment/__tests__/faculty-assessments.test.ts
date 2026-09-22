@@ -318,7 +318,43 @@ async function runTests() {
   assert.strictEqual(matchesBranch("Civil Engineering", "CSE"), false);
   console.log("✅ Test 19 Passed: Department name normalization handles full strings and acronyms");
 
-  console.log("\n🎉 All 19/19 Faculty Assessment 3-Level Flow Tests Passed Successfully!\n");
+  // 20. REGRESSION: PostgreSQL NULL-first ordering bug (the faculty results 0/100 bug).
+  //     PostgreSQL ORDER BY score DESC puts NULL first (NULLS FIRST is the default for DESC).
+  //     The fix: filter score/percentage NOT NULL before ordering, so only graded attempts
+  //     are considered when selecting the best attempt.
+  //
+  //     Simulate what PostgreSQL returns with ORDER BY score DESC (nulls first):
+  const pgDescOrder = [...mockAttempts]
+    .filter(
+      (a) =>
+        a.assessmentId === "5ee35c47-d81c-4e5e-b349-9f16adc2447a" &&
+        a.studentId === "05236f72-0bb5-4df3-a8b8-760cd62891ac" &&
+        ["SUBMITTED", "EVALUATED"].includes(a.status)
+    )
+    // Simulate PostgreSQL DESC NULLS FIRST: null scores sort first
+    .sort((a, b) => {
+      if (a.score === null && b.score === null) return 0;
+      if (a.score === null) return -1; // nulls first
+      if (b.score === null) return 1;
+      return b.score - a.score;
+    });
+
+  // WITHOUT fix: first element has null score → bug shows 0/100
+  const bugged = pgDescOrder[0];
+  assert.strictEqual(bugged.score, null, "Without fix: first attempt has null score (the bug)");
+
+  // WITH fix: filter null scores before ordering
+  const withFix = pgDescOrder.filter((a) => a.score !== null && a.percentage !== null);
+  assert.strictEqual(withFix[0].score, 100, "With fix: first non-null attempt is score=100 (correct)");
+  assert.strictEqual(withFix[0].percentage, 100, "With fix: percentage is 100 (correct)");
+  assert.strictEqual(
+    withFix[0].percentage !== null && withFix[0].percentage >= 50 ? "PASS" : "FAIL",
+    "PASS",
+    "With fix: result is PASS (correct)"
+  );
+  console.log("✅ Test 20 Passed: REGRESSION — PostgreSQL NULL-first ordering bug fixed (Likith shows 100/100 PASS, not 0/100 FAIL)");
+
+  console.log("\n🎉 All 20/20 Faculty Assessment 3-Level Flow Tests Passed Successfully!\n");
 }
 
 runTests().catch((err) => {

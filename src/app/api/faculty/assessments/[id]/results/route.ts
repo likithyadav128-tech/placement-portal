@@ -111,7 +111,12 @@ export async function GET(
       (s) => matchesYear(s.year, targetYear) && matchesBranch(s.department, targetBranch)
     );
 
-    // 3. Fetch all attempts for this assessment by cohort students
+    // 3. Fetch all graded attempts for this assessment by cohort students.
+    //    IMPORTANT: filter score/percentage NOT NULL first.
+    //    PostgreSQL ORDER BY score DESC places NULL values FIRST (NULLS FIRST is
+    //    the PostgreSQL default for DESC), so without this filter the null-score
+    //    attempt would always be selected as the "best" attempt — causing 0/100
+    //    to be shown for students who actually scored 100/100.
     const studentIds = cohortStudents.map((s) => s.id);
     const attempts = await withDbRetry(() =>
       prisma.assessmentAttempt.findMany({
@@ -119,6 +124,8 @@ export async function GET(
           assessmentId: id,
           studentId: { in: studentIds },
           status: { in: ["SUBMITTED", "EVALUATED"] },
+          score: { not: null },
+          percentage: { not: null },
         },
         orderBy: { score: "desc" },
       })
