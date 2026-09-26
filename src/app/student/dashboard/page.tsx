@@ -2,39 +2,28 @@
 
 import React, { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import {
-  Card,
-  CardHeader,
-  CardTitle,
-  CardDescription,
-  CardContent,
-} from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import {
-  BookOpen,
-  Code,
-  Trophy,
   Target,
-  Clock,
+  Code2,
+  BrainCircuit,
+  MessageSquare,
   TrendingUp,
-  Sparkles,
-  AlertCircle,
   ArrowRight,
-  FileText,
-  PlayCircle,
-  Layers,
-  MapPin,
+  BookOpen,
+  Clock,
   CheckCircle2,
+  Zap,
+  Star,
+  ChevronRight,
 } from "lucide-react";
-import { TrendLineChart, StatCard } from "@/components/charts";
+import { GradientAreaChart } from "@/components/charts";
 import { DashboardSkeleton, ErrorState } from "@/components/feedback/states";
-import { getGreeting } from "@/lib/utils";
-import { PageHeader } from "@/components/layout/page-header";
 import { useRole } from "@/context/RoleContext";
 import { createClient } from "@/lib/supabase/client";
+import { cn } from "@/lib/utils";
 
+/* ─── Types ─── */
 interface DashboardData {
   student: {
     id: string;
@@ -105,11 +94,221 @@ interface DashboardData {
   };
 }
 
+/* ─── Hero Banner Illustration (inline SVG) ─── */
+function HeroIllustration() {
+  return (
+    <svg
+      viewBox="0 0 240 200"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      className="w-full h-full"
+      aria-hidden="true"
+    >
+      {/* Decorative background circles */}
+      <circle cx="180" cy="40" r="50" fill="white" fillOpacity="0.07" />
+      <circle cx="210" cy="100" r="30" fill="white" fillOpacity="0.06" />
+      <circle cx="50" cy="160" r="35" fill="white" fillOpacity="0.05" />
+
+      {/* Desk */}
+      <rect x="40" y="145" width="160" height="10" rx="4" fill="white" fillOpacity="0.25" />
+
+      {/* Laptop base */}
+      <rect x="80" y="120" width="90" height="55" rx="6" fill="#1E40AF" fillOpacity="0.85" />
+      {/* Laptop screen */}
+      <rect x="85" y="95" width="80" height="52" rx="4" fill="#DBEAFE" fillOpacity="0.95" />
+      {/* Screen content lines */}
+      <rect x="92" y="104" width="40" height="4" rx="2" fill="#3B82F6" fillOpacity="0.5" />
+      <rect x="92" y="112" width="55" height="3" rx="1.5" fill="#93C5FD" fillOpacity="0.4" />
+      <rect x="92" y="119" width="48" height="3" rx="1.5" fill="#93C5FD" fillOpacity="0.4" />
+      <rect x="92" y="126" width="36" height="3" rx="1.5" fill="#93C5FD" fillOpacity="0.3" />
+      {/* Screen chart */}
+      <polyline
+        points="130,135 140,128 150,132 160,122"
+        stroke="#34D399"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+
+      {/* Person body (hoodie) */}
+      <ellipse cx="125" cy="90" rx="30" ry="35" fill="#1D4ED8" />
+      {/* Hoodie details */}
+      <rect x="110" y="75" width="30" height="20" rx="4" fill="#1E40AF" />
+      <rect x="118" y="75" width="14" height="25" rx="3" fill="#172554" fillOpacity="0.4" />
+
+      {/* Left arm */}
+      <path d="M97 85 Q88 95 90 108" stroke="#1D4ED8" strokeWidth="14" strokeLinecap="round" fill="none" />
+      {/* Left hand on keyboard */}
+      <ellipse cx="91" cy="111" rx="8" ry="5" fill="#FCD34D" />
+
+      {/* Right arm */}
+      <path d="M153 85 Q162 95 160 108" stroke="#1D4ED8" strokeWidth="14" strokeLinecap="round" fill="none" />
+      {/* Right hand */}
+      <ellipse cx="160" cy="111" rx="8" ry="5" fill="#FCD34D" />
+
+      {/* Head */}
+      <circle cx="125" cy="62" r="22" fill="#FCD34D" />
+      {/* Hair */}
+      <path d="M103 60 Q105 38 125 40 Q145 38 147 60" fill="#1E3A5F" />
+      {/* Eyes */}
+      <circle cx="118" cy="62" r="2.5" fill="#1E3A5F" />
+      <circle cx="132" cy="62" r="2.5" fill="#1E3A5F" />
+      {/* Smile */}
+      <path d="M119 70 Q125 75 131 70" stroke="#1E3A5F" strokeWidth="1.5" fill="none" strokeLinecap="round" />
+
+      {/* Floating stars / sparkles */}
+      <circle cx="68" cy="55" r="4" fill="white" fillOpacity="0.5" />
+      <circle cx="185" cy="70" r="3" fill="white" fillOpacity="0.4" />
+      <circle cx="175" cy="45" r="2" fill="#FCD34D" fillOpacity="0.7" />
+      <circle cx="62" cy="90" r="2.5" fill="white" fillOpacity="0.35" />
+
+      {/* Small trophy icon top-right */}
+      <rect x="190" y="30" width="24" height="24" rx="6" fill="white" fillOpacity="0.15" />
+      <text x="196" y="47" fontSize="14" fill="#FCD34D">🏆</text>
+    </svg>
+  );
+}
+
+/* ─── Metric Card ─── */
+interface MetricCardProps {
+  title: string;
+  value: number | null;
+  change?: string;
+  changeType?: "positive" | "negative" | "neutral";
+  iconBg: string;
+  iconColor: string;
+  icon: React.ReactNode;
+  emptyLabel?: string;
+}
+
+function MetricCard({
+  title,
+  value,
+  change,
+  changeType = "neutral",
+  iconBg,
+  iconColor,
+  icon,
+  emptyLabel = "Not attempted",
+}: MetricCardProps) {
+  const hasValue = value !== null && value > 0;
+
+  return (
+    <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-5 flex items-start gap-4 hover:shadow-md transition-shadow">
+      {/* Icon block */}
+      <div className={cn("w-12 h-12 rounded-xl flex items-center justify-center shrink-0", iconBg)}>
+        <span className={iconColor}>{icon}</span>
+      </div>
+      {/* Text */}
+      <div className="min-w-0 flex-1">
+        <p className="text-xs font-medium text-slate-500 leading-tight mb-1">{title}</p>
+        {hasValue ? (
+          <>
+            <p className="text-3xl font-bold text-[#172554] leading-none">{value}%</p>
+            {change && (
+              <p
+                className={cn(
+                  "text-xs font-medium mt-1.5",
+                  changeType === "positive" && "text-green-600",
+                  changeType === "negative" && "text-red-500",
+                  changeType === "neutral" && "text-slate-400"
+                )}
+              >
+                {change}
+              </p>
+            )}
+          </>
+        ) : (
+          <>
+            <p className="text-2xl font-bold text-slate-300 leading-none">—</p>
+            <p className="text-xs text-slate-400 mt-1.5">{emptyLabel}</p>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ─── Goal Item ─── */
+interface GoalItemProps {
+  icon: React.ReactNode;
+  iconBg: string;
+  iconColor: string;
+  title: string;
+  priority: "HIGH" | "MEDIUM" | "LOW";
+  href: string;
+  onClick?: () => void;
+}
+
+function GoalItem({ icon, iconBg, iconColor, title, priority, href, onClick }: GoalItemProps) {
+  const priorityConfig = {
+    HIGH: { label: "HIGH", cls: "bg-red-500 text-white" },
+    MEDIUM: { label: "MEDIUM", cls: "bg-amber-400 text-white" },
+    LOW: { label: "LOW", cls: "bg-blue-400 text-white" },
+  };
+  const cfg = priorityConfig[priority];
+
+  return (
+    <Link
+      href={href}
+      onClick={onClick}
+      className="flex items-center gap-3 p-2.5 rounded-xl hover:bg-blue-50/60 transition-colors group"
+    >
+      <div className={cn("w-9 h-9 rounded-lg flex items-center justify-center shrink-0", iconBg)}>
+        <span className={iconColor}>{icon}</span>
+      </div>
+      <span className="flex-1 text-sm font-medium text-[#172554] leading-tight truncate">{title}</span>
+      <span className={cn("text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0", cfg.cls)}>
+        {cfg.label}
+      </span>
+    </Link>
+  );
+}
+
+/* ─── Assessment score badge colour ─── */
+function scoreBadgeCls(pct: number): string {
+  if (pct >= 70) return "bg-green-100 text-green-700 border border-green-200";
+  if (pct >= 40) return "bg-amber-100 text-amber-700 border border-amber-200";
+  return "bg-red-100 text-red-600 border border-red-200";
+}
+
+function assessmentTypeIcon(type?: string) {
+  const t = (type || "").toLowerCase();
+  if (t === "coding") return <Code2 className="h-4 w-4" />;
+  if (t.includes("aptitude") || t.includes("quantitative") || t.includes("logical"))
+    return <BrainCircuit className="h-4 w-4" />;
+  return <BookOpen className="h-4 w-4" />;
+}
+
+/* ─── Trophy SVG ─── */
+function TrophyIllustration() {
+  return (
+    <svg viewBox="0 0 80 80" fill="none" xmlns="http://www.w3.org/2000/svg" className="w-20 h-20" aria-hidden="true">
+      <circle cx="40" cy="40" r="38" fill="white" fillOpacity="0.2" />
+      {/* Cup */}
+      <path d="M24 20h32v18c0 10-6 16-16 16s-16-6-16-16V20z" fill="#FCD34D" />
+      <path d="M24 20h32v4H24z" fill="#F59E0B" />
+      {/* Handles */}
+      <path d="M24 24 Q16 28 16 36 Q16 44 24 44" stroke="#FCD34D" strokeWidth="4" fill="none" strokeLinecap="round" />
+      <path d="M56 24 Q64 28 64 36 Q64 44 56 44" stroke="#FCD34D" strokeWidth="4" fill="none" strokeLinecap="round" />
+      {/* Stem */}
+      <rect x="36" y="54" width="8" height="10" rx="2" fill="#FCD34D" />
+      {/* Base */}
+      <rect x="28" y="62" width="24" height="6" rx="3" fill="#F59E0B" />
+      {/* Star on cup */}
+      <text x="31" y="43" fontSize="16" fill="white" fillOpacity="0.85">★</text>
+    </svg>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════ */
+/*                  MAIN DASHBOARD PAGE                   */
+/* ═══════════════════════════════════════════════════════ */
+
 export default function StudentDashboard() {
   const router = useRouter();
   const { user } = useRole();
-  const greeting = getGreeting();
-  const [timeRange, setTimeRange] = useState("all");
+  const [timeRange, setTimeRange] = useState("6m");
   const [dashboardData, setDashboardData] = useState<DashboardData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
@@ -123,46 +322,32 @@ export default function StudentDashboard() {
       if (session?.access_token) {
         headers["Authorization"] = `Bearer ${session.access_token}`;
       }
-
       const res = await fetch(`/api/student/dashboard?timeRange=${timeRange}`, {
         headers,
         credentials: "include",
       });
       if (!res.ok) {
-        if (res.status === 401) {
-          router.push("/login");
-          return;
-        }
+        if (res.status === 401) { router.push("/login"); return; }
         throw new Error(`Failed to load dashboard (HTTP ${res.status})`);
       }
       const json = (await res.json()) as DashboardData;
       setDashboardData(json);
       setFetchError(null);
     } catch (err: unknown) {
-      setFetchError(
-        err instanceof Error ? err.message : "Failed to load dashboard data"
-      );
+      setFetchError(err instanceof Error ? err.message : "Failed to load dashboard data");
     } finally {
       setIsLoading(false);
     }
   }, [router, timeRange]);
 
-  const handleRetry = useCallback(() => {
-    loadDashboardData();
-  }, [loadDashboardData]);
+  useEffect(() => { loadDashboardData(); }, [loadDashboardData]);
 
-  useEffect(() => {
-    loadDashboardData();
-  }, [loadDashboardData]);
-
-  const student = dashboardData?.student || user?.student;
+  /* ─── Derived values ─── */
+  const student = dashboardData?.student ?? user?.student;
   const kpiDeltas = dashboardData?.kpiDeltas;
-  const chartData = dashboardData?.performanceHistory || [];
-  const upcomingAssessments = dashboardData?.upcomingAssessments || [];
-  const focusAreas = dashboardData?.focusAreas || [];
-  const reminders = dashboardData?.reminders || [];
-  const recommendedNextStep = dashboardData?.recommendedNextStep;
-  const roadmapProgress = dashboardData?.roadmap.progressPercentage ?? 0;
+  const chartData = dashboardData?.performanceHistory ?? [];
+  const reminders = dashboardData?.reminders ?? [];
+  const performanceHistory = dashboardData?.performanceHistory ?? [];
 
   const displayName = user?.name
     ? user.name.split(" ")[0]
@@ -170,349 +355,367 @@ export default function StudentDashboard() {
     ? dashboardData.student.name.split(" ")[0]
     : "Student";
 
+  /* ─── Recent assessments from performance history ─── */
+  const recentAssessments = [...performanceHistory]
+    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+    .slice(0, 5);
+
+  /* ─── Today's goals from reminders ─── */
+  // Default goal set when reminders are empty (static suggestions only, no fake data)
+  const defaultGoals: GoalItemProps[] = [
+    {
+      icon: <CheckCircle2 className="h-4 w-4" />,
+      iconBg: "bg-red-50",
+      iconColor: "text-red-500",
+      title: "Complete your profile",
+      priority: "HIGH",
+      href: "/student/profile",
+    },
+    {
+      icon: <BookOpen className="h-4 w-4" />,
+      iconBg: "bg-amber-50",
+      iconColor: "text-amber-500",
+      title: "Take a Mock Test",
+      priority: "MEDIUM",
+      href: "/student/mock-tests",
+    },
+    {
+      icon: <Code2 className="h-4 w-4" />,
+      iconBg: "bg-blue-50",
+      iconColor: "text-blue-500",
+      title: "Practice Coding",
+      priority: "MEDIUM",
+      href: "/student/assignments",
+    },
+    {
+      icon: <BrainCircuit className="h-4 w-4" />,
+      iconBg: "bg-teal-50",
+      iconColor: "text-teal-500",
+      title: "Improve Aptitude",
+      priority: "LOW",
+      href: "/student/assignments",
+    },
+  ];
+
+  // Map reminders → goal items (keep the same shape)
+  const goalItems: GoalItemProps[] =
+    reminders.length > 0
+      ? reminders.slice(0, 4).map((r) => ({
+          icon: <Zap className="h-4 w-4" />,
+          iconBg:
+            r.priority === "HIGH"
+              ? "bg-red-50"
+              : r.priority === "MEDIUM"
+              ? "bg-amber-50"
+              : "bg-blue-50",
+          iconColor:
+            r.priority === "HIGH"
+              ? "text-red-500"
+              : r.priority === "MEDIUM"
+              ? "text-amber-500"
+              : "text-blue-500",
+          title: r.title,
+          priority: r.priority,
+          href: r.actionUrl,
+        }))
+      : defaultGoals;
+
+  /* ─── Period selector tabs ─── */
+  const periods = [
+    { label: "30D", value: "30d" },
+    { label: "3M", value: "3m" },
+    { label: "6M", value: "6m" },
+    { label: "1Y", value: "1y" },
+    { label: "All", value: "all" },
+  ];
+
+  /* ─── Loading / Error states ─── */
   if (isLoading && !dashboardData) {
-    return (
-      <div className="space-y-6">
-        <PageHeader
-          title={`${greeting}, ${displayName}`}
-          description="Here's a summary of your placement readiness and recent progress."
-        />
-        <DashboardSkeleton />
-      </div>
-    );
+    return <div className="p-6"><DashboardSkeleton /></div>;
   }
 
   if (fetchError && !dashboardData) {
     return (
-      <div className="space-y-6">
-        <PageHeader
-          title={`${greeting}, ${displayName}`}
-          description="Here's a summary of your placement readiness and recent progress."
-        />
+      <div className="p-6">
         <ErrorState
-          title="Unable to load dashboard data"
+          title="Unable to load dashboard"
           message={fetchError}
-          onRetry={handleRetry}
+          onRetry={loadDashboardData}
         />
       </div>
     );
   }
 
+  /* ════════════════════════════ RENDER ════════════════════════════ */
   return (
-    <div className="space-y-6 pb-16">
-      <PageHeader
-        title={`${greeting}, ${displayName}`}
-        description="Here's an overview of your placement readiness, skills, and recommended preparation steps."
-      />
+    <div className="space-y-6 pb-16 max-w-[1400px] mx-auto">
 
-      {/* Main KPI Row - Real calculated values from DB */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard
+      {/* ── HERO BANNER ── */}
+      <div
+        className="relative overflow-hidden rounded-2xl"
+        style={{
+          background: "linear-gradient(135deg, #0878F9 0%, #0756C9 40%, #06B6D4 100%)",
+          minHeight: "240px",
+        }}
+      >
+        {/* Decorative blobs */}
+        <div className="absolute top-[-40px] right-[-40px] w-64 h-64 rounded-full bg-white opacity-[0.05]" />
+        <div className="absolute bottom-[-30px] right-[180px] w-40 h-40 rounded-full bg-cyan-300 opacity-[0.08]" />
+        <div className="absolute top-[20px] right-[100px] w-20 h-20 rounded-full bg-white opacity-[0.06]" />
+        <div className="absolute bottom-[10px] left-[30%] w-12 h-12 rounded-full bg-white opacity-[0.05]" />
+
+        <div className="relative flex items-center justify-between h-full px-8 py-8">
+          {/* Left: Text */}
+          <div className="flex-1 min-w-0 pr-4">
+            <h1 className="text-3xl sm:text-4xl font-extrabold text-white leading-tight tracking-tight">
+              Level up your placement journey,{" "}
+              <span className="text-cyan-200">{displayName}!</span>{" "}
+              🚀
+            </h1>
+            <p className="mt-3 text-base text-blue-100 font-medium">
+              Practice. Improve. Get Placed.
+            </p>
+            <div className="mt-5 flex flex-wrap gap-3">
+              <Link
+                href="/student/assignments"
+                className="inline-flex items-center gap-2 px-5 py-2.5 bg-white text-blue-700 text-sm font-semibold rounded-xl hover:bg-blue-50 transition-colors shadow-sm"
+              >
+                Start Practice
+                <ArrowRight className="h-4 w-4" />
+              </Link>
+              <Link
+                href="/student/mock-tests"
+                className="inline-flex items-center gap-2 px-5 py-2.5 bg-white/15 border border-white/30 text-white text-sm font-semibold rounded-xl hover:bg-white/25 transition-colors"
+              >
+                Mock Tests
+              </Link>
+            </div>
+          </div>
+
+          {/* Right: Illustration */}
+          <div className="hidden sm:block shrink-0 w-[200px] h-[200px] lg:w-[240px] lg:h-[240px]">
+            <HeroIllustration />
+          </div>
+        </div>
+      </div>
+
+      {/* ── FOUR METRIC CARDS ── */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+        <MetricCard
           title="Placement Readiness"
-          value={`${student?.placementReadiness ?? 0}%`}
+          value={student?.placementReadiness ?? null}
           change={kpiDeltas?.placementReadiness.change}
           changeType={kpiDeltas?.placementReadiness.changeType}
-          icon={<Target className="h-5 w-5 text-blue-600" />}
+          iconBg="bg-blue-50"
+          iconColor="text-blue-600"
+          icon={<Target className="h-5 w-5" />}
+          emptyLabel="No assessments yet"
         />
-        <StatCard
+        <MetricCard
           title="Coding Proficiency"
-          value={`${student?.codingScore ?? 0}%`}
+          value={student?.codingScore ?? null}
           change={kpiDeltas?.coding.change}
           changeType={kpiDeltas?.coding.changeType}
-          icon={<Code className="h-5 w-5 text-indigo-600" />}
+          iconBg="bg-teal-50"
+          iconColor="text-teal-600"
+          icon={<Code2 className="h-5 w-5" />}
         />
-        <StatCard
+        <MetricCard
           title="Aptitude & Reasoning"
-          value={`${student?.aptitudeScore ?? 0}%`}
+          value={student?.aptitudeScore ?? null}
           change={kpiDeltas?.aptitude.change}
           changeType={kpiDeltas?.aptitude.changeType}
-          icon={<Trophy className="h-5 w-5 text-amber-600" />}
+          iconBg="bg-amber-50"
+          iconColor="text-amber-500"
+          icon={<BrainCircuit className="h-5 w-5" />}
         />
-        <StatCard
+        <MetricCard
           title="Communication / Verbal"
-          value={`${student?.communicationScore ?? 0}%`}
+          value={student?.communicationScore ?? null}
           change={kpiDeltas?.communication.change}
           changeType={kpiDeltas?.communication.changeType}
-          icon={<BookOpen className="h-5 w-5 text-emerald-600" />}
+          iconBg="bg-pink-50"
+          iconColor="text-pink-500"
+          icon={<MessageSquare className="h-5 w-5" />}
         />
       </div>
 
-      {/* Actionable Reminders Banner Section */}
-      {reminders.length > 0 && (
-        <Card className="border-amber-200 bg-gradient-to-r from-amber-50/70 via-orange-50/40 to-white">
-          <CardHeader className="pb-3">
-            <div className="flex items-center gap-2">
-              <AlertCircle className="h-5 w-5 text-amber-600" />
-              <CardTitle className="text-base text-slate-900">
-                Action Items & Pending Preparation Reminders
-              </CardTitle>
-            </div>
-            <CardDescription className="text-xs text-slate-600">
-              Complete these key steps to maximize placement screening success.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-2.5">
-            {reminders.map((rem) => (
-              <div
-                key={rem.id}
-                className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 bg-white rounded-xl border border-amber-200/80 shadow-xs"
-              >
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="font-bold text-xs text-slate-900">
-                      {rem.title}
-                    </span>
-                    <Badge
-                      variant="secondary"
-                      className={
-                        rem.priority === "HIGH"
-                          ? "bg-rose-50 text-rose-700 border-rose-200 text-[10px]"
-                          : "bg-amber-50 text-amber-700 border-amber-200 text-[10px]"
-                      }
-                    >
-                      {rem.priority} Priority
-                    </Badge>
-                  </div>
-                  <p className="text-xs text-slate-500 mt-0.5">{rem.description}</p>
-                </div>
-                <Button
-                  size="sm"
-                  onClick={() => router.push(rem.actionUrl)}
-                  className="bg-amber-600 hover:bg-amber-700 text-white text-xs h-8 px-3 shrink-0 self-start sm:self-auto"
-                >
-                  {rem.actionLabel}
-                  <ArrowRight className="h-3 w-3 ml-1" />
-                </Button>
-              </div>
-            ))}
-          </CardContent>
-        </Card>
-      )}
+      {/* ── YOUR PROGRESS + TODAY'S GOALS ── */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Performance Chart with Date Range Tabs */}
-        <Card className="lg:col-span-2">
-          <CardHeader className="flex flex-col sm:flex-row sm:items-center justify-between pb-2 gap-3">
+        {/* Your Progress (2/3) */}
+        <div className="lg:col-span-2 bg-white rounded-2xl border border-slate-200/80 shadow-sm p-5">
+          {/* Card header */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
             <div>
-              <CardTitle>Performance Trend</CardTitle>
-              <CardDescription>
-                Your overall score progression across verified assessment records
-              </CardDescription>
+              <h2 className="text-base font-bold text-[#172554]">Your Progress</h2>
+              <p className="text-xs text-slate-400 mt-0.5">Overall score across all completed assessments</p>
             </div>
-            <Tabs value={timeRange} onValueChange={setTimeRange}>
-              <TabsList className="flex flex-wrap h-auto p-1 bg-slate-100 gap-0.5">
-                <TabsTrigger value="today" className="text-[11px] px-2 py-1">Today</TabsTrigger>
-                <TabsTrigger value="7d" className="text-[11px] px-2 py-1">7D</TabsTrigger>
-                <TabsTrigger value="30d" className="text-[11px] px-2 py-1">30D</TabsTrigger>
-                <TabsTrigger value="3m" className="text-[11px] px-2 py-1">3M</TabsTrigger>
-                <TabsTrigger value="6m" className="text-[11px] px-2 py-1">6M</TabsTrigger>
-                <TabsTrigger value="1y" className="text-[11px] px-2 py-1">1Y</TabsTrigger>
-                <TabsTrigger value="all" className="text-[11px] px-2 py-1">All</TabsTrigger>
-              </TabsList>
-            </Tabs>
-          </CardHeader>
-          <CardContent>
-            {chartData.length === 0 ? (
-              <div className="h-[300px] flex flex-col items-center justify-center text-center p-6 bg-slate-50/50 rounded-lg border border-dashed border-slate-200">
-                <div className="h-10 w-10 rounded-full bg-blue-50 text-blue-500 flex items-center justify-center mb-3">
-                  <TrendingUp className="h-5 w-5" />
-                </div>
-                <p className="text-sm font-medium text-slate-700">
-                  No performance records in this time window
-                </p>
-                <p className="text-xs text-slate-400 mt-1 max-w-sm">
-                  Complete assignments and mock tests to track your longitudinal score growth.
-                </p>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="mt-4"
-                  onClick={() => router.push("/student/assignments")}
+            {/* Period tabs */}
+            <div className="flex items-center gap-1 bg-slate-100 rounded-lg p-1 self-start sm:self-auto">
+              {periods.map((p) => (
+                <button
+                  key={p.value}
+                  onClick={() => setTimeRange(p.value)}
+                  className={cn(
+                    "px-3 py-1 text-[11px] font-semibold rounded-md transition-colors",
+                    timeRange === p.value
+                      ? "bg-white text-blue-700 shadow-sm"
+                      : "text-slate-500 hover:text-slate-700"
+                  )}
                 >
-                  Start Assignment
-                </Button>
-              </div>
-            ) : (
-              <div className="h-[300px]">
-                <TrendLineChart
-                  data={chartData as unknown as Record<string, unknown>[]}
-                  lines={[
-                    {
-                      key: "overall",
-                      color: "#2563eb",
-                      name: "Overall Score",
-                    },
-                  ]}
-                />
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Recommended Next Step - Data-Driven */}
-        <Card className="flex flex-col">
-          <CardHeader>
-            <CardTitle>Recommended Next Step</CardTitle>
-            <CardDescription>
-              Targeted action tailored to your weakest area
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="flex-1 flex flex-col justify-center items-center text-center p-6 bg-slate-50 mx-6 rounded-lg border border-slate-100 mb-6">
-            <div className="h-12 w-12 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center mb-4">
-              <Sparkles className="h-6 w-6" />
+                  {p.label}
+                </button>
+              ))}
             </div>
-            <h3 className="font-semibold text-slate-900 mb-2">
-              {recommendedNextStep?.title || "Complete Full Practice"}
-            </h3>
-            <p className="text-xs text-slate-500 mb-6 leading-relaxed">
-              {recommendedNextStep?.description ||
-                "Take benchmark assessments and practice mock tests to improve your readiness score."}
-            </p>
-            <Button
-              className="w-full bg-blue-600 hover:bg-blue-700 text-white text-xs"
-              onClick={() => router.push(recommendedNextStep?.actionUrl || "/student/assignments")}
+          </div>
+
+          {/* Chart or empty state */}
+          {chartData.length === 0 ? (
+            <div className="h-[280px] flex flex-col items-center justify-center text-center bg-blue-50/30 rounded-xl border border-dashed border-blue-200">
+              <div className="w-10 h-10 rounded-full bg-blue-100 text-blue-500 flex items-center justify-center mb-3">
+                <TrendingUp className="h-5 w-5" />
+              </div>
+              <p className="text-sm font-semibold text-slate-700">No performance records yet</p>
+              <p className="text-xs text-slate-400 mt-1 max-w-xs">
+                Complete assignments and mock tests to track your score growth over time.
+              </p>
+              <button
+                onClick={() => router.push("/student/assignments")}
+                className="mt-4 px-4 py-2 bg-blue-600 text-white text-xs font-semibold rounded-lg hover:bg-blue-700 transition-colors"
+              >
+                Start an Assignment
+              </button>
+            </div>
+          ) : (
+            <GradientAreaChart
+              data={chartData as unknown as Record<string, unknown>[]}
+              dataKey="overall"
+              xKey="month"
+              height={280}
+              color="#0D6EFD"
+            />
+          )}
+        </div>
+
+        {/* Today's Goals (1/3) */}
+        <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-5 flex flex-col">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-base font-bold text-[#172554]">Today&apos;s Goals</h2>
+            <Link
+              href="/student/recommendations"
+              className="text-xs text-blue-600 font-semibold hover:text-blue-700 flex items-center gap-0.5"
             >
-              {recommendedNextStep?.actionLabel || "Explore Assignments"}
-              <ArrowRight className="h-3.5 w-3.5 ml-1" />
-            </Button>
-          </CardContent>
-        </Card>
+              View All <ChevronRight className="h-3.5 w-3.5" />
+            </Link>
+          </div>
+          <div className="flex flex-col gap-1 flex-1">
+            {goalItems.map((g, i) => (
+              <GoalItem key={i} {...g} />
+            ))}
+          </div>
+          {reminders.length === 0 && (
+            <p className="text-[11px] text-slate-400 text-center mt-3">
+              Suggested goals — complete assessments for personalized reminders.
+            </p>
+          )}
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Focus Areas */}
-        <Card className="lg:col-span-2">
-          <CardHeader>
-            <CardTitle>Skill Competency Focus Areas</CardTitle>
-            <CardDescription>
-              Prioritized technical feedback identified from your submitted assessments
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            {focusAreas.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-12 px-4 text-center bg-slate-50/50 rounded-lg border border-dashed border-slate-200">
-                <div className="h-10 w-10 rounded-full bg-slate-100 text-slate-400 flex items-center justify-center mb-3">
-                  <Sparkles className="h-5 w-5" />
-                </div>
-                <p className="text-sm font-medium text-slate-700">
-                  No critical focus areas flagged
-                </p>
-                <p className="text-xs text-slate-400 mt-1 max-w-sm">
-                  As you complete coding, aptitude, and reasoning assessments,
-                  your performance will be continuously analyzed here.
-                </p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {focusAreas.map((area, idx) => (
-                  <div
-                    key={area.id || idx}
-                    className="flex items-center justify-between p-4 rounded-lg border border-slate-100 bg-white hover:border-slate-200 transition-colors"
-                  >
-                    <div className="flex flex-col pr-2">
-                      <span className="font-medium text-sm text-slate-900">
-                        {area.skill}
-                      </span>
-                      <span
-                        className="text-xs text-slate-500 mt-0.5 line-clamp-1"
-                        title={area.suggestion}
-                      >
-                        {area.suggestion}
-                      </span>
-                    </div>
-                    <Badge
-                      variant={
-                        area.status === "needs_improvement"
-                          ? "danger"
-                          : area.status === "improving"
-                          ? "warning"
-                          : "success"
-                      }
-                      className="shrink-0 capitalize text-[10px]"
-                    >
-                      {area.status.replace("_", " ")}
-                    </Badge>
-                  </div>
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
+      {/* ── RECENT ASSESSMENTS + MOTIVATIONAL CARD ── */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
 
-        {/* Upcoming Work & Roadmap Progress */}
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between">
-            <CardTitle>Upcoming Work</CardTitle>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => router.push("/student/assignments")}
-              className="text-xs"
+        {/* Recent Assessments (2/3) */}
+        <div className="lg:col-span-2 bg-white rounded-2xl border border-slate-200/80 shadow-sm p-5">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-base font-bold text-[#172554]">Recent Assessments</h2>
+            <Link
+              href="/student/performance"
+              className="text-xs text-blue-600 font-semibold hover:text-blue-700 flex items-center gap-0.5"
             >
-              View All
-            </Button>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {upcomingAssessments.length === 0 ? (
-              <div className="py-6 text-center text-xs text-slate-400">
-                No pending assessments at this time.
-              </div>
-            ) : (
-              upcomingAssessments.map((assessment) => (
-                <div
-                  key={assessment.id}
-                  onClick={() => router.push("/student/assignments")}
-                  className="flex items-center justify-between p-3 rounded-lg border border-slate-100 hover:border-blue-200 hover:bg-blue-50/30 transition-all cursor-pointer"
-                >
-                  <div className="flex items-center gap-3">
-                    <div className="h-9 w-9 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
-                      <BookOpen className="h-4 w-4" />
-                    </div>
-                    <div>
-                      <h4 className="font-medium text-xs text-slate-900 line-clamp-1">
-                        {assessment.title}
-                      </h4>
-                      <span className="text-[11px] text-slate-500 flex items-center gap-1">
-                        <Clock className="h-3 w-3" />
-                        {assessment.duration} min • {assessment.totalQuestions} Qs
-                      </span>
-                    </div>
-                  </div>
-                  <Badge
-                    variant="secondary"
-                    className="capitalize text-[10px] shrink-0"
-                  >
-                    {assessment.type}
-                  </Badge>
-                </div>
-              ))
-            )}
+              View All <ChevronRight className="h-3.5 w-3.5" />
+            </Link>
+          </div>
 
-            {/* Placement Roadmap Tracker Card */}
-            <div className="pt-3 border-t border-slate-100 mt-4">
-              <div className="flex justify-between items-center text-xs text-slate-500 mb-1.5">
-                <span className="font-semibold text-slate-700">Roadmap Progress</span>
-                <span className="font-bold text-blue-700">
-                  {roadmapProgress}%
-                </span>
+          {recentAssessments.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-12 text-center bg-blue-50/30 rounded-xl border border-dashed border-blue-200">
+              <div className="w-10 h-10 rounded-full bg-blue-100 text-blue-500 flex items-center justify-center mb-3">
+                <Star className="h-5 w-5" />
               </div>
-              <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-blue-600 rounded-full transition-all duration-300"
-                  style={{ width: `${roadmapProgress}%` }}
-                />
-              </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => router.push("/student/roadmap")}
-                className="w-full mt-2 text-xs text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+              <p className="text-sm font-semibold text-slate-700">No completed assessments yet</p>
+              <p className="text-xs text-slate-400 mt-1 max-w-xs">
+                Take coding, aptitude, or mock tests to see your results here.
+              </p>
+              <button
+                onClick={() => router.push("/student/mock-tests")}
+                className="mt-4 px-4 py-2 bg-blue-600 text-white text-xs font-semibold rounded-lg hover:bg-blue-700 transition-colors"
               >
-                Continue Curriculum Roadmap <ArrowRight className="h-3 w-3 ml-1" />
-              </Button>
+                Explore Mock Tests
+              </button>
             </div>
-          </CardContent>
-        </Card>
+          ) : (
+            <div className="divide-y divide-slate-100">
+              {recentAssessments.map((a) => {
+                const pct = a.maxScore > 0 ? Math.round((a.score / a.maxScore) * 100) : a.overall ?? 0;
+                const dateStr = a.date
+                  ? new Date(a.date).toLocaleDateString("en-IN", {
+                      day: "numeric",
+                      month: "short",
+                      year: "numeric",
+                    })
+                  : a.month ?? "—";
+                return (
+                  <div key={a.id} className="flex items-center gap-3 py-3 hover:bg-slate-50 -mx-2 px-2 rounded-lg transition-colors">
+                    {/* Icon */}
+                    <div className="w-9 h-9 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
+                      {assessmentTypeIcon(a.title)}
+                    </div>
+                    {/* Title + date */}
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold text-[#172554] truncate">{a.title}</p>
+                      <div className="flex items-center gap-1 mt-0.5">
+                        <Clock className="h-3 w-3 text-slate-400" />
+                        <span className="text-[11px] text-slate-400">{dateStr}</span>
+                      </div>
+                    </div>
+                    {/* Score badge */}
+                    <span className={cn("text-xs font-bold px-2.5 py-1 rounded-full shrink-0", scoreBadgeCls(pct))}>
+                      {pct}%
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Motivational Card (1/3) */}
+        <div
+          className="rounded-2xl p-6 flex flex-col items-center justify-center text-center relative overflow-hidden min-h-[200px]"
+          style={{
+            background: "linear-gradient(135deg, #EFF6FF 0%, #ECFEFF 60%, #F0FDFA 100%)",
+            border: "1px solid #BAE6FD",
+          }}
+        >
+          {/* Decorative circles */}
+          <div className="absolute top-[-20px] right-[-20px] w-36 h-36 rounded-full bg-blue-200 opacity-20" />
+          <div className="absolute bottom-[-15px] left-[-15px] w-28 h-28 rounded-full bg-cyan-200 opacity-20" />
+
+          <div className="relative z-10 flex flex-col items-center">
+            <TrophyIllustration />
+            <h3 className="text-xl font-extrabold text-[#172554] mt-3">Keep going!</h3>
+            <p className="text-sm text-slate-500 mt-2 leading-relaxed max-w-[200px]">
+              Consistent practice today leads to big results tomorrow.
+            </p>
+            <Link
+              href="/student/recommendations"
+              className="mt-4 inline-flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white text-xs font-semibold rounded-xl hover:bg-blue-700 transition-colors shadow-sm"
+            >
+              See Recommendations
+              <ArrowRight className="h-3.5 w-3.5" />
+            </Link>
+          </div>
+        </div>
       </div>
     </div>
   );

@@ -85,7 +85,7 @@ export function AppShell({ children }: AppShellProps) {
   }
 
   return (
-    <div className="flex min-h-screen bg-slate-50">
+    <div className="flex min-h-screen bg-[#F3F8FF]">
       {/* Desktop Sidebar */}
       <Sidebar
         role={currentRole}

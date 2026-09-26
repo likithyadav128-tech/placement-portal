@@ -108,6 +108,73 @@ export function TrendLineChart({
   );
 }
 
+/* ─── Gradient Area Chart (Your Progress) ─── */
+interface GradientAreaChartProps {
+  data: Record<string, unknown>[];
+  dataKey?: string;
+  xKey?: string;
+  height?: number;
+  className?: string;
+  color?: string;
+}
+
+export function GradientAreaChart({
+  data,
+  dataKey = "overall",
+  xKey = "month",
+  height = 280,
+  className,
+  color = "#0D6EFD",
+}: GradientAreaChartProps) {
+  const gradientId = "progressGradient";
+  return (
+    <div className={cn("w-full", className)}>
+      <ResponsiveContainer width="100%" height={height}>
+        <AreaChart data={data} margin={{ top: 8, right: 16, left: -8, bottom: 0 }}>
+          <defs>
+            <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="5%" stopColor={color} stopOpacity={0.18} />
+              <stop offset="95%" stopColor={color} stopOpacity={0.0} />
+            </linearGradient>
+          </defs>
+          <CartesianGrid strokeDasharray="4 4" stroke="#e2e8f0" vertical={false} />
+          <XAxis
+            dataKey={xKey}
+            tick={{ fontSize: 11, fill: "#94a3b8" }}
+            axisLine={false}
+            tickLine={false}
+          />
+          <YAxis
+            tick={{ fontSize: 11, fill: "#94a3b8" }}
+            axisLine={false}
+            tickLine={false}
+            domain={[0, 100]}
+            tickFormatter={(v: number) => `${v}%`}
+            width={38}
+          />
+          <Tooltip
+            content={
+              <ChartTooltip
+                formatter={(v: number) => `${v}%`}
+              />
+            }
+          />
+          <Area
+            type="monotone"
+            dataKey={dataKey}
+            name="Score"
+            stroke={color}
+            strokeWidth={2.5}
+            fill={`url(#${gradientId})`}
+            dot={{ r: 4, fill: "#fff", stroke: color, strokeWidth: 2 }}
+            activeDot={{ r: 6, fill: color }}
+          />
+        </AreaChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
 /* ─── Area Trend Chart ─── */
 interface AreaTrendChartProps {
   data: Record<string, unknown>[];
